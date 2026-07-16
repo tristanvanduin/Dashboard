@@ -9,6 +9,7 @@ import {
   type GoogleAdsCredentials,
 } from "@/lib/api/google-ads";
 import { buildSearchTermAnalysisPrompt } from "@/lib/prompts/search-term-prompts";
+import { callRouted } from "@/lib/analysis/llm-router";
 import {
   getSupabase,
   getOpenRouterKey,
@@ -24,6 +25,7 @@ import {
 } from "@/lib/schema/search-term-schema";
 import { fixMojibake } from "@/lib/analysis/sanitize";
 import { applySearchTermGuardrails } from "@/lib/analysis/search-term-guardrails";
+import { saveSearchTermVerdictsAsHypotheses } from "@/lib/analysis/search-terms-to-hypotheses";
 import {
   applyProductContextDecisioning,
   buildProductContext,
@@ -31,10 +33,10 @@ import {
 } from "@/lib/analysis/product-context";
 import { fetchStrategicContext } from "@/lib/analysis/expert-layers";
 import { syncMerchantProductSnapshots } from "@/lib/api/merchant-products";
+import { logger } from "@/lib/logger";
 
 export const maxDuration = 300; // 5 minutes for full analysis with many batches
 
-const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 const OPENROUTER_MODEL = "google/gemini-3-flash-preview";
 const BATCH_SIZE = 100; // Smaller batches = less token overflow risk with enhanced schema
 
@@ -307,7 +309,6 @@ ${productList || "Geen productdata beschikbaar"}`;
     // Phase 2: Process in parallel batches (3 concurrent)
     const CONCURRENCY = 3;
     const MAX_RETRIES = 1;
-    const BATCH_TIMEOUT = 90_000; // 90 seconds per batch (enhanced schema needs more time)
 
     const batchResults: BatchResult[] = [];
 
@@ -329,56 +330,32 @@ ${productList || "Geen productdata beschikbaar"}`;
 ${JSON.stringify(termsJson, null, 2)}`;
 
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), BATCH_TIMEOUT);
-
-        const res = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://ranking-masters-dashboard.vercel.app",
-          },
-          body: JSON.stringify({
-            model: OPENROUTER_MODEL,
-            max_tokens: 8192,
-            temperature: 0.1,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userMessage },
-            ],
-          }),
-          signal: controller.signal,
+        const response = await callRouted({
+          apiKey: apiKey!,
+          systemPrompt,
+          userMessage,
+          maxTokens: 8192,
+          label: `search-terms-batch-${batchNum}`,
         });
-
-        clearTimeout(timeout);
-
-        if (!res.ok) {
-          console.error(`[search-terms] OpenRouter error batch ${batchNum}: ${res.status}`);
-          batchResults.push({ batchNum, inputCount: batch.length, outputCount: 0, failedCount: batch.length, retried: isRetry, success: false });
-          return [];
-        }
-
-        const data = await res.json();
-        const rawOutput = fixMojibake(data.choices?.[0]?.message?.content ?? "");
+        const rawOutput = fixMojibake(response.output);
 
         // Parse with Zod validation (partial recovery)
         const parseResult = parseSearchTermBatch(rawOutput);
 
         if (!parseResult.success && !isRetry) {
           // Retry once on complete parse failure
-          console.warn(`[search-terms] Batch ${batchNum} parse failed, retrying...`);
+          logger.warn(`[search-terms] Batch ${batchNum} parse failed, retrying...`);
           return processBatch(batch, batchNum, true);
         }
 
         if (parseResult.errors.length > 0) {
-          console.warn(`[search-terms] Batch ${batchNum}: ${parseResult.errors.length} validation errors, ${parseResult.verdicts.length} valid`);
+          logger.warn(`[search-terms] Batch ${batchNum}: ${parseResult.errors.length} validation errors, ${parseResult.verdicts.length} valid`);
         }
 
         // Detect missing terms
         const missing = findMissingTerms(inputTermNames, parseResult.verdicts);
         if (missing.length > 0 && !isRetry) {
-          console.warn(`[search-terms] Batch ${batchNum}: ${missing.length} terms missing from LLM output`);
+          logger.warn(`[search-terms] Batch ${batchNum}: ${missing.length} terms missing from LLM output`);
         }
 
         // Merge verdicts with original performance data
@@ -413,10 +390,10 @@ ${JSON.stringify(termsJson, null, 2)}`;
         return results;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[search-terms] Batch ${batchNum} error: ${msg}`);
+        logger.error(`[search-terms] Batch ${batchNum} error: ${msg}`);
 
         if (!isRetry) {
-          console.warn(`[search-terms] Batch ${batchNum} failed, retrying...`);
+          logger.warn(`[search-terms] Batch ${batchNum} failed, retrying...`);
           return processBatch(batch, batchNum, true);
         }
 
@@ -488,6 +465,9 @@ ${JSON.stringify(termsJson, null, 2)}`;
       for (let i = 0; i < rows.length; i += 100) {
         await supabase.from("search_term_analysis").insert(rows.slice(i, i + 100));
       }
+
+      // Aggregeer de geadviseerde negatives als voorstel in de goedkeuringswachtrij.
+      await saveSearchTermVerdictsAsHypotheses(supabase, allVerdicts, { clientId, analysisId: null });
     }
 
     return Response.json({

@@ -6,6 +6,9 @@
 // 3. Hypotheses op het niveau van echte SEA specialisten
 // ============================================================
 
+import { WORLD_KNOWLEDGE_GROUNDING } from "./shared-grounding";
+import { IS_LOSS_ALARM_PCT, PMAX_LEARNING_WEEKS, PMAX_LEARNING_CONVERSIONS } from "../analysis/thresholds";
+
 // ============================================================
 // HELPER: Accounttype bepalen op basis van kpi_targets
 // ============================================================
@@ -50,8 +53,8 @@ Gebruik deze benchmarks als referentie bij het beoordelen van performance:
 - Gezonde CTR Shopping: 0,5% - 1,5% | Search: 3% - 8%
 - Gezonde Conv. Rate Shopping: 1% - 3% | Search: 2% - 5%
 - Gezonde CPC Shopping: €0,20 - €0,80 | Search: €0,50 - €2,00
-- PMAX leerfase: minimaal 6 weken, 50+ conversies nodig
-- Impression Share verlies door budget: alarm bij >20%
+- PMAX leerfase: minimaal ${PMAX_LEARNING_WEEKS} weken, ${PMAX_LEARNING_CONVERSIONS}+ conversies nodig
+- Impression Share verlies door budget: alarm bij >${IS_LOSS_ALARM_PCT}%
 - MoM fluctuatie normaal: ±15% op conversies, ±20% op cost
 - Breuklijn signaal: >30% MoM daling op conversies of ROAS`,
 
@@ -61,7 +64,7 @@ Gebruik deze benchmarks als referentie bij het beoordelen van performance:
 - Gezonde CTR Shopping: 0,5% - 1,5% | Search: 3% - 8%
 - Gezonde Conv. Rate: 1% - 4%
 - CPA schommeling normaal: ±20% MoM
-- PMAX leerfase: minimaal 6 weken, 50+ conversies nodig
+- PMAX leerfase: minimaal ${PMAX_LEARNING_WEEKS} weken, ${PMAX_LEARNING_CONVERSIONS}+ conversies nodig
 - MoM fluctuatie normaal: ±15% op conversies
 - Breuklijn signaal: >30% MoM daling op conversies of stijging CPA`,
 
@@ -92,7 +95,7 @@ Gebruik deze benchmarks als referentie bij het beoordelen van performance:
 - Shopping CTR: 0,5% - 1,5% | Search CTR: 3% - 8%
 - Shopping Conv. Rate: 1% - 3% | Search Conv. Rate: 2% - 6%
 - Beoordeel Shopping en Search campagnes apart op hun eigen KPI's
-- PMAX leerfase: minimaal 6 weken, 50+ conversies nodig
+- PMAX leerfase: minimaal ${PMAX_LEARNING_WEEKS} weken, ${PMAX_LEARNING_CONVERSIONS}+ conversies nodig
 - MoM fluctuatie normaal: ±15% op conversies
 - Breuklijn signaal: >30% MoM daling op de primaire doelstelling`,
   };
@@ -115,6 +118,7 @@ export function buildGoalsSection(config: {
   conversionsGrowthPct: number;
   primaryConversionAction?: string;
   accountType: AccountType;
+  plausibility?: { target_implausible: boolean; detail?: string };
 }): string {
   const goals: string[] = [];
 
@@ -123,6 +127,11 @@ export function buildGoalsSection(config: {
   }
   if (config.cpaTarget > 0) {
     goals.push(`- CPA target: €${config.cpaTarget}`);
+  }
+  if (config.plausibility?.target_implausible) {
+    goals.push(
+      `- LET OP: het ingestelde target lijkt niet realistisch geconfigureerd${config.plausibility.detail ? ` (${config.plausibility.detail})` : ""}. Behandel dit als een reden voor target-herijking en bespreek het, lees het niet als performance.`
+    );
   }
   if (config.conversionsMode === "absolute" && config.conversionsAbsolute > 0) {
     goals.push(
@@ -349,18 +358,23 @@ Als data voor een werkwijze ontbreekt, schrijf maximaal 1 zin: "Werkwijze [X]: d
 Schrijf GEEN uitgebreid verhaal over waarom data ontbreekt. Ga direct door naar de volgende werkwijze.
 `;
 
-const MONTHLY_BENCHMARKS: Record<AccountType, string> = {
+// W2.5 (W2): cijferdiscipline voor de korte cadans, tegen verzonnen impact. Spiegelt niet
+// MONTHLY_OUTPUT_DISCIPLINE (dat gaat over herhaling) maar voegt de no-invented-numbers-regel toe.
+const NUMBER_DISCIPLINE = `## Cijferdiscipline
+Een hard percentage of eurobedrag mag ALLEEN voorkomen als het herleidbaar is uit de aangeleverde data of de targets. Verzin geen verbeteringspercentages of bedragen in aanbevelingen. Claim je een effect, formuleer dat kwalitatief (richting plus metric plus meetvenster), tenzij de exacte waarde uit de data volgt.`;
+
+export const MONTHLY_BENCHMARKS: Record<AccountType, string> = {
   ecommerce_roas: `## Benchmarks (E-commerce ROAS-gestuurd)
 - Gezonde CTR Shopping: 0,5%-1,5% | Search: 3%-8%
 - Gezonde Conv. Rate Shopping: 1%-3% | Search: 2%-5%
-- PMAX leerfase: min 6 weken, 50+ conversies nodig
-- IS verlies door budget: alarm bij >20%
+- PMAX leerfase: min ${PMAX_LEARNING_WEEKS} weken, ${PMAX_LEARNING_CONVERSIONS}+ conversies nodig
+- IS verlies door budget: alarm bij >${IS_LOSS_ALARM_PCT}%
 - MoM fluctuatie normaal: ±15% conversies, ±20% cost
 - Breuklijn signaal: >30% MoM daling conversies of ROAS`,
   ecommerce_cpa: `## Benchmarks (E-commerce CPA-gestuurd)
 - Gezonde CTR Shopping: 0,5%-1,5% | Search: 3%-8%
 - CPA schommeling normaal: ±20% MoM
-- PMAX leerfase: min 6 weken, 50+ conversies nodig
+- PMAX leerfase: min ${PMAX_LEARNING_WEEKS} weken, ${PMAX_LEARNING_CONVERSIONS}+ conversies nodig
 - Breuklijn signaal: >30% MoM daling conversies of stijging CPA`,
   leadgen_cpa: `## Benchmarks (Lead generatie CPA-gestuurd)
 - Gezonde CTR Search: 4%-12% | Conv. Rate: 3%-8%
@@ -375,7 +389,7 @@ const MONTHLY_BENCHMARKS: Record<AccountType, string> = {
   hybrid: `## Benchmarks (Hybrid account)
 - Shopping CTR: 0,5%-1,5% | Search CTR: 3%-8%
 - Beoordeel Shopping en Search apart op eigen KPI's
-- PMAX leerfase: min 6 weken, 50+ conversies nodig
+- PMAX leerfase: min ${PMAX_LEARNING_WEEKS} weken, ${PMAX_LEARNING_CONVERSIONS}+ conversies nodig
 - Breuklijn signaal: >30% MoM daling primaire doelstelling`,
 };
 
@@ -383,7 +397,7 @@ export const MONTHLY_STEP_OUTPUT_SCHEMA = `
 Retourneer UITSLUITEND valid JSON. Geen markdown, geen backticks, geen extra tekst.
 
 {
-  "narrative": "string (300-500 woorden, Nederlands, opent MET 'In stap {N-1} stelden we vast dat...' behalve stap 1)",
+  "narrative": "string (300-500 woorden, Nederlands, begint DIRECT met de bevinding van deze stap, GEEN recap van eerdere stappen)",
   "log_entries": ["string conform SOP log-format, 1 per werkwijze die je hebt uitgevoerd"],
   "top_3_findings": [
     {
@@ -487,6 +501,25 @@ Voor elke materiële onderperformancefinding waarvoor action_required=true:
 - als recovery nog niet bewezen is: label die expliciet als hypothese-gedreven hersteloptie
 - geef geen stellige oplossingstaal voor inferred/hypothesis/unknown
 `;
+
+// De issue_cluster- en entity_type-lijst zoals ze in het schema aan de LLM worden getoond.
+// Let op: deze prompt-clusterlijst is bewust een SUBSET van de Zod-validatie-enum
+// (IssueClusterEnum heeft er enkele meer, zoals desktop_inefficiency en search_partner_waste,
+// die de prompt de LLM niet aanbiedt). Dat is bestaand gedrag.
+export const GOOGLE_ISSUE_CLUSTER_TEXT = "tracking_cvr_drop, search_budget_cap, geo_allocation, network_quality, pmax_cannibalization, product_mix, brand_leakage, creative_mismatch, schedule_waste, audience_inefficiency, search_term_waste, search_bidding_inflation, performance_winner, efficiency_gain, scaling_opportunity, device_performance_gap, low_cvr_high_ctr, volume_shortfall, uncategorized";
+export const GOOGLE_ENTITY_TYPE_TEXT = "account|campaign|adgroup|keyword|product|searchterm|creative|audience|device|country|network|schedule";
+
+// Bouwt het output-schema met de cluster- en entity-lijst van het kanaal. Met de Google-
+// defaults vervangt hij de tekst door zichzelf, dus byte-voor-byte gelijk aan het origineel.
+// M2 geeft hier de Meta-lijsten door zodat de LLM Meta-clusters krijgt in plaats van Google.
+export function buildStepOutputSchema(
+  issueClusterText: string = GOOGLE_ISSUE_CLUSTER_TEXT,
+  entityTypeText: string = GOOGLE_ENTITY_TYPE_TEXT,
+): string {
+  return MONTHLY_STEP_OUTPUT_SCHEMA
+    .replace(GOOGLE_ISSUE_CLUSTER_TEXT, issueClusterText)
+    .replace(GOOGLE_ENTITY_TYPE_TEXT, entityTypeText);
+}
 
 export const MONTHLY_FINAL_SOP_SECTIONS = [
   "Primary thread",
@@ -993,17 +1026,36 @@ Elke bevinding:
  * Build the system prompt for a specific monthly analysis step.
  * Combines base role + goals + benchmarks + step instruction + optional previous conclusions.
  */
+// De kanaal-specifieke stukken die buildMonthlyStepPrompt nodig heeft. Een ChannelAdapter
+// voldoet structureel aan deze vorm, dus de route geeft de adapter rechtstreeks door. Geen
+// import van ChannelAdapter hier, zodat er geen circulaire afhankelijkheid ontstaat.
+export interface ChannelPromptConfig {
+  benchmarks: Record<AccountType, string>;
+  issueClusters: readonly string[];
+  entityTypes: readonly string[];
+}
+
 export function buildMonthlyStepPrompt(
   goalsSection: string,
   accountType: AccountType,
   stepInstruction: string,
-  previousConclusions?: string
+  previousConclusions?: string,
+  channel?: ChannelPromptConfig,
+  clientMemorySection?: string,
+  signalsSection?: string
 ): string {
-  let prompt = `${MONTHLY_BASE_ROLE}\n\n${MONTHLY_OUTPUT_DISCIPLINE}\n\n${goalsSection}\n\n${MONTHLY_BENCHMARKS[accountType]}\n\n---\n\n${stepInstruction}`;
+  const benchmarks = channel?.benchmarks ?? MONTHLY_BENCHMARKS;
+  // E1-wiring: het client-geheugen wordt na WORLD_KNOWLEDGE_GROUNDING geweven. Leeg blok
+  // betekent geen wijziging, dus een klant zonder geheugen krijgt een byte-identieke prompt.
+  const memoryBlock = clientMemorySection && clientMemorySection.length > 0 ? `\n\n${clientMemorySection}` : "";
+  // A-track: de deterministisch gedetecteerde signalen en cross-checks. Zelfde principe als
+  // het geheugenblok: leeg blok betekent een byte-identieke prompt.
+  const signalsBlock = signalsSection && signalsSection.length > 0 ? `\n\n${signalsSection}` : "";
+  let prompt = `${MONTHLY_BASE_ROLE}\n\n${MONTHLY_OUTPUT_DISCIPLINE}\n\n${WORLD_KNOWLEDGE_GROUNDING}${memoryBlock}${signalsBlock}\n\n${goalsSection}\n\n${benchmarks[accountType]}\n\n---\n\n${stepInstruction}`;
   if (previousConclusions) {
     prompt += `\n\n---\n\n## Context: Conclusies vorige stappen\n${previousConclusions}`;
   }
-  prompt += `\n\n---\n\n## Verplicht output format\n${MONTHLY_STEP_OUTPUT_SCHEMA}`;
+  prompt += `\n\n---\n\n## Verplicht output format\n${buildStepOutputSchema(channel?.issueClusters?.join(", "), channel?.entityTypes?.join("|"))}`;
   return prompt;
 }
 
@@ -1252,6 +1304,10 @@ Je bent een senior SEA specialist die een bi-weekly check-in uitvoert.
 Schrijf altijd in het Nederlands. Gebruik altijd concrete cijfers.
 Focus op: ontwikkelt de maand zich zoals verwacht? Zijn er directe acties nodig?
 
+${NUMBER_DISCIPLINE}
+
+${WORLD_KNOWLEDGE_GROUNDING}
+
 ${goalsSection}
 
 ${benchmarks}
@@ -1386,6 +1442,10 @@ export function buildWeeklyPrompt(
 Je bent een senior SEA specialist die een wekelijkse health check uitvoert.
 Schrijf altijd in het Nederlands. Wees beknopt en direct actionable.
 Doel: vroeg signaleren van anomalies en ad waste. Geen diepe analyse.
+
+${NUMBER_DISCIPLINE}
+
+${WORLD_KNOWLEDGE_GROUNDING}
 
 ${goalsSection}
 
@@ -1574,6 +1634,9 @@ export const WEEKLY_RECS_SYSTEM = `Je ontvangt twee bronnen:
 
 Genereer aanbevelingen en taken. Weekly focus: URGENTE acties, korte tijdshorizon.
 
+## Cijferdiscipline
+Een hard percentage of eurobedrag mag ALLEEN voorkomen als het herleidbaar is uit de aangeleverde data of de targets. Verzin geen verbeteringspercentages of bedragen in aanbevelingen. Claim je een effect, formuleer dat kwalitatief (richting plus metric plus meetvenster), tenzij de exacte waarde uit de data volgt.
+
 BELANGRIJK — Actie-gating regels (weekly):
 - "direct_action": ALLEEN bij tracking breaks, budget-uitputting, of bleeders >3x CPA met high confidence
 - "investigate_first": bij vermoedens van tracking issues, onverklaarde afwijkingen
@@ -1668,6 +1731,9 @@ export const BIWEEKLY_RECS_SYSTEM = `Je ontvangt twee bronnen:
 2. De tekst van de analyse
 
 Genereer aanbevelingen en taken uit BEIDE bronnen:
+
+## Cijferdiscipline
+Een hard percentage of eurobedrag mag ALLEEN voorkomen als het herleidbaar is uit de aangeleverde data of de targets. Verzin geen verbeteringspercentages of bedragen in aanbevelingen. Claim je een effect, formuleer dat kwalitatief (richting plus metric plus meetvenster), tenzij de exacte waarde uit de data volgt.
 - Voor elke finding waar action_required = true: genereer een aanbeveling met source="finding" en 1-3 taken
 - Voor strategische inzichten uit de analyse: genereer een aanbeveling met source="hypothesis"
 

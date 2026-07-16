@@ -1,3 +1,4 @@
+export {};
 /**
  * Verify trend score logic using projectionFactor + lastRatio.
  * Run with: npx tsx lib/__tests__/health-trend.test.ts

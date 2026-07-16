@@ -136,9 +136,13 @@ console.log("3. ICE-spread >= 2.0 tussen hoogste en laagste aanbeveling");
     conclusionText: "Conclusie",
   });
 
-  const totals = structured.recommendations.map((recommendation) => recommendation.ice_total).sort((a, b) => b - a);
-  assert(totals.length >= 3, "should build at least 3 recommendations from step actions");
-  assert((totals[0] - totals[totals.length - 1]) >= 2, "ICE spread should be at least 2.0");
+  const iceInOrder = structured.recommendations.map((recommendation) => recommendation.ice_total);
+  assert(iceInOrder.length >= 3, "should build at least 3 recommendations from step actions");
+  // Build 1 (F5) verving enforceIceSpread (kunstmatige spreiding) door eerlijke ranking.
+  // Niet langer een geforceerde spread van 2.0 toetsen, maar dat de aanbevelingen aflopend
+  // op hun echte ICE staan en geldige, eindige scores hebben.
+  assert(iceInOrder.every((value, index) => index === 0 || iceInOrder[index - 1] >= value), "recommendations should be ranked by descending ICE");
+  assert(iceInOrder.every((value) => typeof value === "number" && Number.isFinite(value)), "ICE totals should be finite numbers");
 }
 
 console.log("4. Aanbevelingen bevatten geen verboden woorden");
@@ -182,7 +186,7 @@ console.log("5. Dedup-key 'duitsland::roas' resulteert in max 1 finding");
     hypotheses_sprint_plan: true,
   });
 
-  const germanyRoas = canonical.findings.filter((item) => item.dedup_key === "duitsland::ROAS");
+  const germanyRoas = canonical.findings.filter((item) => /(^|::)duitsland::ROAS$/i.test(item.dedup_key));
   assert(germanyRoas.length === 1, `expected max 1 Germany ROAS dedup key, got ${germanyRoas.length}`);
 }
 

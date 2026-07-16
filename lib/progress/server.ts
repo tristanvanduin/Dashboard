@@ -7,6 +7,7 @@ import {
   buildRunningJobUpdate,
 } from "./core";
 import type { GenerationJobLookupResponse, GenerationJobRow, GenerationJobSnapshot, GenerationJobType } from "./types";
+import { logger } from "@/lib/logger";
 
 const JOBS_TABLE = "generation_jobs";
 const EVENTS_TABLE = "generation_job_events";
@@ -19,7 +20,7 @@ let trackerUnavailableDetectedAt = 0;
 function logOnce(key: string, message: string) {
   if (loggedMessages.has(key)) return;
   loggedMessages.add(key);
-  console.error(message);
+  logger.error(message);
 }
 
 export function isProgressStorageUnavailableError(error: Pick<PostgrestError, "code" | "message"> | null | undefined): boolean {

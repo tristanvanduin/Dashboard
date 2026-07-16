@@ -1,3 +1,5 @@
+import { mapRsaAssetApiRow, mapAdMetaApiRow, type RsaAssetApiResult, type AdMetaApiResult } from "./google-ads-rsa-transform";
+import { logger } from "@/lib/logger";
 /**
  * Google Ads API client
  *
@@ -1054,7 +1056,8 @@ export interface WastefulSearchTerm {
   clicks: number;
   cost: number;
   conversions: number;
-  matchType: string;
+  /** De STATUS van de zoekterm (ADDED, EXCLUDED, NONE), niet het match-type. */
+  status: string;
 }
 
 /**
@@ -1097,7 +1100,9 @@ export async function getWastefulSearchTerms(
       clicks: m.clicks || 0,
       cost: (m.costMicros || m.cost_micros || 0) / 1_000_000,
       conversions: 0,
-      matchType: st.status || "",
+      // Dit veld draagt de STATUS van de zoekterm (ADDED, EXCLUDED, NONE), niet het
+      // match-type. Het heette matchType en dat was een val voor de volgende lezer.
+      status: st.status || "",
     };
   });
 }
@@ -1113,7 +1118,8 @@ export interface SearchTermWithClicks {
   cost: number;
   conversions: number;
   conversionsValue: number;
-  matchType: string;
+  /** De STATUS van de zoekterm (ADDED, EXCLUDED, NONE), niet het match-type. */
+  status: string;
 }
 
 /**
@@ -1157,7 +1163,9 @@ export async function getAllSearchTermsWithClicks(
       cost: (m.costMicros || m.cost_micros || 0) / 1_000_000,
       conversions: m.conversions || 0,
       conversionsValue: m.conversionsValue || m.conversions_value || 0,
-      matchType: st.status || "",
+      // Dit veld draagt de STATUS van de zoekterm (ADDED, EXCLUDED, NONE), niet het
+      // match-type. Het heette matchType en dat was een val voor de volgende lezer.
+      status: st.status || "",
     };
   });
 }
@@ -1511,7 +1519,9 @@ export async function getWastefulSearchTermsByMonth(
       clicks: m.clicks || 0,
       cost: (m.costMicros || m.cost_micros || 0) / 1_000_000,
       conversions: 0,
-      matchType: st.status || "",
+      // Dit veld draagt de STATUS van de zoekterm (ADDED, EXCLUDED, NONE), niet het
+      // match-type. Het heette matchType en dat was een val voor de volgende lezer.
+      status: st.status || "",
     };
   });
 }
@@ -2188,7 +2198,7 @@ export async function getGeoPerformanceByMonth(
 
     return result;
   } catch (err) {
-    console.error("[getGeoPerformanceByMonth] ERROR:", err instanceof Error ? err.message : err);
+    logger.error("[getGeoPerformanceByMonth] ERROR:", err instanceof Error ? err.message : err);
     return [];
   }
 }
@@ -2951,5 +2961,207 @@ export async function getPmaxSearchCategoriesByMonth(
         conversionsValue: m.conversionsValue || m.conversions_value || 0,
       };
     });
+  } catch { return []; }
+}
+
+// ── RSA-assets en ad-metadata (migratie 020; het RSA/W1-duo) ────────────────────
+
+/**
+ * Asset-prestaties per maand uit ad_group_ad_asset_view: dezelfde data die het Ad copy
+ * insights script gebruikt. LET OP de meet-eigenschap: een RSA toont meerdere assets
+ * tegelijk, dus deze metrics tellen dubbel over assets heen; de analyse-kern draagt die
+ * beperking verplicht mee.
+ */
+export async function getRsaAssetMetricsByMonth(
+  credentials: GoogleAdsCredentials,
+  customerId: string,
+  startDate: string,
+  endDate: string
+): Promise<RsaAssetApiResult[]> {
+  const rows = await queryGoogleAds(credentials, customerId, `
+    SELECT
+      campaign.name,
+      ad_group.name,
+      ad_group_ad.ad.id,
+      asset.id,
+      asset.text_asset.text,
+      ad_group_ad_asset_view.field_type,
+      ad_group_ad_asset_view.pinned_field,
+      ad_group_ad_asset_view.performance_label,
+      segments.month,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.cost_micros
+    FROM ad_group_ad_asset_view
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+      AND ad_group_ad_asset_view.field_type IN ('HEADLINE', 'DESCRIPTION')
+    ORDER BY metrics.impressions DESC
+  `);
+  return rows.map((row) => mapRsaAssetApiRow(row as Record<string, unknown>)).filter((r): r is RsaAssetApiResult => r !== null);
+}
+
+/**
+ * Ad-metadata met de final URL (voor de landing-audit): een momentopname, geen tijdreeks.
+ */
+export async function getAdMeta(credentials: GoogleAdsCredentials, customerId: string): Promise<AdMetaApiResult[]> {
+  const rows = await queryGoogleAds(credentials, customerId, `
+    SELECT
+      campaign.name,
+      ad_group.name,
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.type,
+      ad_group_ad.ad.final_urls,
+      ad_group_ad.status
+    FROM ad_group_ad
+    WHERE ad_group_ad.status != 'REMOVED'
+  `);
+  return rows.map((row) => mapAdMetaApiRow(row as Record<string, unknown>)).filter((r): r is AdMetaApiResult => r !== null);
+}
+
+// ── Negative Keywords (categorie G: de conflictchecker) ────────────────────
+//
+// Drie niveaus, want een negative kan op alle drie leven en een checker die er een mist
+// geeft VALSE GERUSTSTELLING. Gedeelde lijsten zijn bij een agency juist de gebruikelijke
+// manier, dus die MOETEN erin.
+//
+// Elke fetch heeft zijn eigen `catch { return []; }`, het patroon dat in dit bestand al
+// achttien keer bewezen is. Daardoor kan een veld dat in deze API-versie niet bestaat
+// hooguit deze dataset leegmaken; de sync van het hele portfolio blijft draaien.
+
+export interface NegativeKeywordRow {
+  level: "campaign" | "ad_group" | "shared_set";
+  campaignName: string;
+  adGroupName: string;
+  listName: string;
+  keywordText: string;
+  matchType: string;
+}
+
+/** Negatives op adgroep-niveau. */
+export async function getAdGroupNegatives(
+  credentials: GoogleAdsCredentials,
+  customerId: string
+): Promise<NegativeKeywordRow[]> {
+  try {
+    const rows = await queryGoogleAds(credentials, customerId, `
+      SELECT
+        campaign.name,
+        ad_group.name,
+        ad_group_criterion.keyword.text,
+        ad_group_criterion.keyword.match_type
+      FROM ad_group_criterion
+      WHERE ad_group_criterion.negative = TRUE
+        AND ad_group_criterion.type = 'KEYWORD'
+        AND campaign.status IN ('ENABLED', 'PAUSED')
+    `);
+    return rows.map((row) => {
+      const c = row.campaign as Record<string, string>;
+      const ag = (row.adGroup || row.ad_group) as Record<string, string>;
+      const crit = (row.adGroupCriterion || row.ad_group_criterion) as Record<string, unknown>;
+      const kw = (crit?.keyword || {}) as Record<string, string>;
+      return {
+        level: "ad_group" as const,
+        campaignName: c?.name || "",
+        adGroupName: ag?.name || "",
+        listName: "",
+        keywordText: kw.text || "",
+        matchType: kw.matchType || kw.match_type || "",
+      };
+    });
+  } catch { return []; }
+}
+
+/** Negatives op campagne-niveau. */
+export async function getCampaignNegatives(
+  credentials: GoogleAdsCredentials,
+  customerId: string
+): Promise<NegativeKeywordRow[]> {
+  try {
+    const rows = await queryGoogleAds(credentials, customerId, `
+      SELECT
+        campaign.name,
+        campaign_criterion.keyword.text,
+        campaign_criterion.keyword.match_type
+      FROM campaign_criterion
+      WHERE campaign_criterion.negative = TRUE
+        AND campaign_criterion.type = 'KEYWORD'
+        AND campaign.status IN ('ENABLED', 'PAUSED')
+    `);
+    return rows.map((row) => {
+      const c = row.campaign as Record<string, string>;
+      const crit = (row.campaignCriterion || row.campaign_criterion) as Record<string, unknown>;
+      const kw = (crit?.keyword || {}) as Record<string, string>;
+      return {
+        level: "campaign" as const,
+        campaignName: c?.name || "",
+        adGroupName: "",
+        listName: "",
+        keywordText: kw.text || "",
+        matchType: kw.matchType || kw.match_type || "",
+      };
+    });
+  } catch { return []; }
+}
+
+/**
+ * Negatives uit gedeelde lijsten. Twee queries: welke lijst hangt aan welke campagne, en
+ * wat staat er in die lijsten. Het resultaat is per campagne uitgevouwen, want een conflict
+ * is altijd per campagne.
+ */
+export async function getSharedSetNegatives(
+  credentials: GoogleAdsCredentials,
+  customerId: string
+): Promise<NegativeKeywordRow[]> {
+  try {
+    const links = await queryGoogleAds(credentials, customerId, `
+      SELECT
+        campaign.name,
+        shared_set.id,
+        shared_set.name
+      FROM campaign_shared_set
+      WHERE shared_set.type = 'NEGATIVE_KEYWORDS'
+        AND campaign.status IN ('ENABLED', 'PAUSED')
+    `);
+    if (links.length === 0) return [];
+
+    const criteria = await queryGoogleAds(credentials, customerId, `
+      SELECT
+        shared_set.id,
+        shared_criterion.keyword.text,
+        shared_criterion.keyword.match_type
+      FROM shared_criterion
+      WHERE shared_set.type = 'NEGATIVE_KEYWORDS'
+    `);
+
+    // De lijstinhoud per lijst-id, zodat het uitvouwen per campagne geen n-kwadraat wordt.
+    const bySet = new Map<string, Array<{ text: string; matchType: string }>>();
+    for (const row of criteria) {
+      const set = (row.sharedSet || row.shared_set) as Record<string, string>;
+      const crit = (row.sharedCriterion || row.shared_criterion) as Record<string, unknown>;
+      const kw = (crit?.keyword || {}) as Record<string, string>;
+      const id = String(set?.id ?? "");
+      if (!id || !kw.text) continue;
+      const list = bySet.get(id) ?? [];
+      list.push({ text: kw.text, matchType: kw.matchType || kw.match_type || "" });
+      bySet.set(id, list);
+    }
+
+    const out: NegativeKeywordRow[] = [];
+    for (const link of links) {
+      const c = link.campaign as Record<string, string>;
+      const set = (link.sharedSet || link.shared_set) as Record<string, string>;
+      for (const kw of bySet.get(String(set?.id ?? "")) ?? []) {
+        out.push({
+          level: "shared_set" as const,
+          campaignName: c?.name || "",
+          adGroupName: "",
+          listName: set?.name || "",
+          keywordText: kw.text,
+          matchType: kw.matchType,
+        });
+      }
+    }
+    return out;
   } catch { return []; }
 }

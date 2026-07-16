@@ -116,7 +116,7 @@ const EVIDENCE_RANK: Record<"deterministic" | "inferred" | "hypothesis" | "unkno
   unknown: 0,
 };
 
-const ENTITY_ALIASES: Array<[RegExp, string]> = [
+export const ENTITY_ALIASES: Array<[RegExp, string]> = [
   [/^account(\s*:\s*account)?(\s*(totaal|overall|performance|wide|level|breed))?$/i, "Account"],
   [/^account(\s+(overall|performance|wide|level))?$/i, "Account"],
   [/^account overall$/i, "Account"],
@@ -138,7 +138,7 @@ const ENTITY_ALIASES: Array<[RegExp, string]> = [
   [/^youtube(\s*\(pmax\))?$/i, "YouTube"],
 ];
 
-const METRIC_ALIASES: Array<[RegExp, string]> = [
+export const METRIC_ALIASES: Array<[RegExp, string]> = [
   [/^search lost is \(budget\)$/i, "Search Lost IS (Budget)"],
   [/^search impression share \(budget\)$/i, "Search Lost IS (Budget)"],
   [/^search impression share \(budget\)\s*$/i, "Search Lost IS (Budget)"],
@@ -220,19 +220,19 @@ function cleanCause(cause: string | null): string {
     .trim();
 }
 
-export function normalizeEntityName(raw: string, entityType: Finding["entity_type"] = "campaign"): string {
+export function normalizeEntityName(raw: string, entityType: Finding["entity_type"] = "campaign", entityAliases: ReadonlyArray<readonly [RegExp, string]> = ENTITY_ALIASES): string {
   let name = normalizeScopedEntityName(raw, entityType);
 
-  for (const [pattern, canonical] of ENTITY_ALIASES) {
+  for (const [pattern, canonical] of entityAliases) {
     if (pattern.test(name) && entityType !== "adgroup") return canonical;
   }
 
   return name;
 }
 
-export function normalizeMetricName(raw: string): string {
+export function normalizeMetricName(raw: string, metricAliases: ReadonlyArray<readonly [RegExp, string]> = METRIC_ALIASES): string {
   const metric = (raw || "").trim();
-  for (const [pattern, canonical] of METRIC_ALIASES) {
+  for (const [pattern, canonical] of metricAliases) {
     if (pattern.test(metric)) return canonical;
   }
   return metric;
@@ -342,9 +342,11 @@ export function displayProblemKey(identity: DisplayGroupIdentity): string {
   return `${identity.entity_identity_key || slugify(identity.canonical_entity_name)}::${family}::${causeFamily}::${actionFamily}`;
 }
 
-function detectClusterFamily(finding: Finding, canonicalEntity: string, canonicalMetric: string): Finding["issue_cluster"] {
+function detectClusterFamily(finding: Finding, canonicalEntity: string, canonicalMetric: string, validClusters?: readonly string[]): Finding["issue_cluster"] {
   const provided = (finding.issue_cluster || "").trim();
   if (provided) {
+    // Clusters die geldig zijn voor dit kanaal gaan ongewijzigd door, zonder Google-CLUSTER_ALIASES te forceren.
+    if (validClusters && validClusters.includes(provided)) return provided as Finding["issue_cluster"];
     for (const [pattern, canonical] of CLUSTER_ALIASES) {
       if (pattern.test(provided)) return canonical as Finding["issue_cluster"];
     }
@@ -412,14 +414,14 @@ function findingCoverageDimensions(finding: Finding, family: string): CoverageDi
   return Array.from(dims);
 }
 
-export function normalizeFindings(findings: Finding[]): NormalizedFinding[] {
+export function normalizeFindings(findings: Finding[], entityAliases?: ReadonlyArray<readonly [RegExp, string]>, metricAliases?: ReadonlyArray<readonly [RegExp, string]>, validClusters?: readonly string[]): NormalizedFinding[] {
   return findings.map((finding, index) => {
     const identity = deriveEntityIdentity(finding);
-    const canonicalEntityName = normalizeEntityName(finding.entity_name, finding.entity_type);
-    const canonicalMetric = normalizeMetricName(finding.metric);
+    const canonicalEntityName = normalizeEntityName(finding.entity_name, finding.entity_type, entityAliases);
+    const canonicalMetric = normalizeMetricName(finding.metric, metricAliases);
     const canonicalEntityKey = slugify(canonicalEntityName);
     const canonicalMetricKey = slugify(canonicalMetric);
-    const clusterFamily = detectClusterFamily(finding, canonicalEntityName, canonicalMetric);
+    const clusterFamily = detectClusterFamily(finding, canonicalEntityName, canonicalMetric, validClusters);
 
     return {
       ...finding,
@@ -439,7 +441,7 @@ export function normalizeFindings(findings: Finding[]): NormalizedFinding[] {
       canonical_metric: canonicalMetric,
       canonical_metric_key: canonicalMetricKey,
       cluster_family: clusterFamily,
-      dedup_key: deduplicationKey({ entity_name: canonicalEntityName, metric: canonicalMetric }),
+      dedup_key: `${identity.entity_scope}::${deduplicationKey({ entity_name: canonicalEntityName, metric: canonicalMetric })}`,
     };
   });
 }
@@ -649,9 +651,10 @@ export function checkSopCoverage(
 
 export function canonicalizeFindings(
   rawFindings: Finding[],
-  dimensionAvailability: Partial<Record<CoverageDimension, boolean>> = {}
+  dimensionAvailability: Partial<Record<CoverageDimension, boolean>> = {},
+  channel?: { entityAliases?: ReadonlyArray<readonly [RegExp, string]>; metricAliases?: ReadonlyArray<readonly [RegExp, string]>; validClusters?: readonly string[] }
 ): CanonicalizedOutput {
-  const normalized = normalizeFindings(rawFindings);
+  const normalized = normalizeFindings(rawFindings, channel?.entityAliases, channel?.metricAliases, channel?.validClusters);
   const deduped = deduplicateFindings(normalized);
   const clusters = clusterFindings(deduped);
   const coverage = checkSopCoverage(clusters, dimensionAvailability);

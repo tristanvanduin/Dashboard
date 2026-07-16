@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAccessToken, type GoogleAdsCredentials } from "@/lib/api/google-ads";
+import { logger } from "@/lib/logger";
 
 const MERCHANT_API_BASE = "https://merchantapi.googleapis.com/products/v1";
 const DEFAULT_CACHE_HOURS = 24;
@@ -302,7 +303,7 @@ export async function syncMerchantProductSnapshots(opts: {
         message: "Merchant snapshot-tabel ontbreekt; fallback-context gebruikt.",
       };
     }
-    console.error("[merchant] sync failed:", error instanceof Error ? error.message : String(error));
+    logger.error("[merchant] sync failed:", error instanceof Error ? error.message : String(error));
     return {
       tracker: cached.length > 0 ? "stale_cache" : "unavailable",
       products: cached,

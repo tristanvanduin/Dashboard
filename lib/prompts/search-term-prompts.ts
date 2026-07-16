@@ -3,8 +3,12 @@
  * Enhanced with confidence, evidence, intent, and risk fields.
  */
 
+import { WORLD_KNOWLEDGE_GROUNDING } from "./shared-grounding";
+
 export function buildSearchTermAnalysisPrompt(): string {
   return `Je bent een senior SEA-specialist die zoektermen beoordeelt op relevantie voor een adverteerder.
+
+${WORLD_KNOWLEDGE_GROUNDING}
 
 ## Jouw taak
 Je krijgt een lijst zoektermen met hun campagne, ad group, clicks, kosten en conversies.

@@ -7,6 +7,7 @@ import {
   markProgressFailed,
   updateProgressPhase,
 } from "@/lib/progress/server";
+import { logger } from "@/lib/logger";
 
 /**
  * GET /api/client-reports/pdf?report_id=xxx&client_name=yyy
@@ -147,7 +148,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (err) {
-    console.error("[client-reports/pdf] Failed:", err);
+    logger.error("[client-reports/pdf] Failed:", err);
     await markProgressFailed(supabase, {
       jobId,
       errorMessage: err instanceof Error ? err.message : "PDF mislukt",

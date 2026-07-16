@@ -131,7 +131,7 @@ Voer ALLE drie werkwijzen uit.`,
   13: `Stap 13 heeft geen specifiek logformat; het is een synthese-stap. Gebruik de bevindingen in hun oorspronkelijke logformats.`,
 };
 
-const STEP_PURITY_CONTRACTS: Record<number, string> = {
+export const STEP_PURITY_CONTRACTS: Record<number, string> = {
   1: `### Step-Purity Contract
 - Doel: accountstatus, KPI-keten, target-gap en trendstatus duiden
 - Leidende databronnen: account month-data, targets, YoY/MoM, change history, benchmarks

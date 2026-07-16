@@ -392,7 +392,7 @@ async function backfillClient(
     impressions: st.impressions,
     clicks: st.clicks,
     cost: st.cost,
-    match_type: st.matchType,
+    term_status: st.status,
   }));
 
   // 7. ads_change_history

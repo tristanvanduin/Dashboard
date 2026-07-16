@@ -7,6 +7,7 @@ import { useClientHistoricalData } from "@/lib/client-data-provider";
 import { computeForecast, MONTH_LABELS } from "@/lib/forecast";
 import { getClientSettings } from "@/lib/client-settings";
 import { getAllClients } from "@/lib/clients";
+import { fixMojibake } from "@/lib/analysis/sanitize";
 
 function fmt(v: number): string {
   return new Intl.NumberFormat("nl-NL", {
@@ -115,14 +116,14 @@ export function ReportExport({ clientId }: { clientId: string }) {
   }
 
   function handleCopy() {
-    const report = generateReport();
+    const report = fixMojibake(generateReport());
     navigator.clipboard.writeText(report);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
   function handleDownload() {
-    const report = generateReport();
+    const report = fixMojibake(generateReport());
     const blob = new Blob([report], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

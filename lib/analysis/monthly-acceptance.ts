@@ -1,5 +1,6 @@
 import type { StepResult } from "@/lib/analysis/helpers";
-import type { ThreadRecommendation, ThreadTask } from "@/lib/analysis/monthly-structured";
+import type { ThreadRecommendation, ThreadTask, FinalSopRecommendation, FinalSopTask } from "@/lib/analysis/monthly-structured";
+import { hasDoubleConditional, normalizeText } from "@/lib/analysis/monthly-structured";
 import type { SopCoverage } from "@/lib/analysis/canonicalize";
 import type { AcceptanceCriterionResult, AcceptanceReport } from "@/lib/schema/monthly-pipeline-schema";
 import type { StepValidationResult } from "@/lib/analysis/step-validator";
@@ -23,16 +24,18 @@ export function validateMonthlyAcceptance(opts: {
   findings: Array<{ canonical_entity_name: string; canonical_metric: string }>;
   checkpointsRun: number;
   stepValidations?: StepValidationResult[];
+  finalSop?: { recommendations: FinalSopRecommendation[]; tasks: FinalSopTask[] };
+  stepCount?: number;
 }): AcceptanceReport {
-  const { narrativeSteps, recommendations, tasks, coverage, findings, checkpointsRun, stepValidations = [] } = opts;
+  const { narrativeSteps, recommendations, tasks, coverage, findings, checkpointsRun, stepValidations = [], finalSop, stepCount = 13 } = opts;
   const criteria: AcceptanceCriterionResult[] = [];
 
-  const deepDiveSteps = narrativeSteps.filter((step) => step.stepNumber >= 1 && step.stepNumber <= 13);
+  const deepDiveSteps = narrativeSteps.filter((step) => step.stepNumber >= 1 && step.stepNumber <= stepCount);
   criteria.push({
     id: "AC-01",
-    label: "Alle 13 SOP-stappen aanwezig",
-    passed: deepDiveSteps.length === 13,
-    detail: `${deepDiveSteps.length}/13 stappen uitgevoerd`,
+    label: `Alle ${stepCount} SOP-stappen aanwezig`,
+    passed: deepDiveSteps.length === stepCount,
+    detail: `${deepDiveSteps.length}/${stepCount} stappen uitgevoerd`,
   });
 
   criteria.push({
@@ -95,6 +98,41 @@ export function validateMonthlyAcceptance(opts: {
     detail: invalidOfficialSteps.length === 0
       ? `${officialStepValidations.length || 0} finale stapvalidaties akkoord`
       : `Invalid steps: ${invalidOfficialSteps.join(", ")}`,
+  });
+
+  const finalRecommendations = finalSop?.recommendations ?? [];
+  const finalTasks = finalSop?.tasks ?? [];
+  const normalizedHandelingen = finalRecommendations.map((recommendation) => normalizeText(recommendation.handeling));
+  const duplicateHandelingen = normalizedHandelingen.length - new Set(normalizedHandelingen).size;
+  criteria.push({
+    id: "AC-16",
+    label: "Geen twee finale aanbevelingen met dezelfde handeling",
+    passed: duplicateHandelingen === 0,
+    detail: duplicateHandelingen === 0
+      ? "Alle finale aanbevelingen hebben een unieke handeling."
+      : `${duplicateHandelingen} duplicaat-handeling(en) in de finale aanbevelingen.`,
+  });
+
+  const doubleConditionalCount =
+    finalRecommendations.filter((recommendation) => hasDoubleConditional(recommendation.beslisregel)).length +
+    finalTasks.filter((task) => hasDoubleConditional(task.beslisregel)).length;
+  criteria.push({
+    id: "AC-17",
+    label: "Geen beslisregel met dubbele conditie",
+    passed: doubleConditionalCount === 0,
+    detail: doubleConditionalCount === 0
+      ? "Geen dubbelconditie-beslisregels."
+      : `${doubleConditionalCount} beslisregel(s) met een dubbele conditie.`,
+  });
+
+  const officialValidations = stepValidations.filter((validation) => validation.stepNumber >= 1 && validation.stepNumber <= 13);
+  const stepsWithoutAC08 = officialValidations.filter((validation) => !validation.warnings.some((warning) => warning.startsWith("AC-08"))).length;
+  const ac08Pct = officialValidations.length > 0 ? Math.round((stepsWithoutAC08 / officialValidations.length) * 100) : 100;
+  criteria.push({
+    id: "AC-18",
+    label: "Aandeel stappen dat het SOP-logformat volgt (rapporterend)",
+    passed: true,
+    detail: `${ac08Pct}% van de stappen zonder AC-08-logformat-waarschuwing (${stepsWithoutAC08}/${officialValidations.length}).`,
   });
 
   const passed = criteria.every((criterion) => criterion.passed);

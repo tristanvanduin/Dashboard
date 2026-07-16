@@ -1,0 +1,46 @@
+# W1.5 (Z2): geplande backups en maandelijkse restore-proef. Secrets staan in
+# repo-secrets, nooit in de repo. Bij een mislukte job gaat er een backup_failed- of
+# backup_restore_failed-event naar het notify-endpoint met CRON_SECRET. LIVE-ONGETEST tot
+# de secrets en het scratch-doel geregeld zijn.
+name: backup
+on:
+  schedule:
+    - cron: "0 3 * * *"    # dagelijkse dump om 03:00 UTC
+    - cron: "0 4 1 * *"    # maandelijkse restore-proef, de 1e van de maand om 04:00 UTC
+  workflow_dispatch: {}
+jobs:
+  dump:
+    if: github.event.schedule != '0 4 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci
+      - name: Dump plus versleutelen
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GPG_RECIPIENT: ${{ secrets.GPG_RECIPIENT }}
+        run: bash scripts/backup/dump.sh
+      - name: Melding bij falen
+        if: failure()
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: 'curl -fsS -X POST "${{ secrets.NOTIFY_URL }}" -H "x-cron-secret: $CRON_SECRET" -H "content-type: application/json" -d ''{"type":"backup_failed","kernfeit":"dagelijkse dump-job mislukt"}'' || true'
+  restore-test:
+    if: github.event.schedule == '0 4 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci
+      - name: Restore-proef
+        env:
+          SCRATCH_DATABASE_URL: ${{ secrets.SCRATCH_DATABASE_URL }}
+        run: echo "TODO haal de laatste dump plus manifest uit de bucket en draai scripts/backup/restore-test.sh"
+      - name: Melding bij falen
+        if: failure()
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: 'curl -fsS -X POST "${{ secrets.NOTIFY_URL }}" -H "x-cron-secret: $CRON_SECRET" -H "content-type: application/json" -d ''{"type":"backup_restore_failed","kernfeit":"maandelijkse restore-proef mislukt"}'' || true'

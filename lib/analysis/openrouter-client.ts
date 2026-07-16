@@ -5,6 +5,9 @@
  */
 
 import { fixMojibake } from "./sanitize";
+import { sanitizeLLMPayload } from "../security/sanitize-llm-payload";
+import { classifyLLMError, type LLMErrorClassification } from "./llm-error";
+import { logger } from "@/lib/logger";
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = "google/gemini-3-flash-preview";
@@ -23,8 +26,13 @@ export interface OpenRouterRequest {
   temperature?: number;
   /** Request JSON mode from the model */
   jsonMode?: boolean;
+  /** M3: optionele afbeelding (base64) voor multimodale calls; laat het tekstpad ongemoeid. */
+  imageBase64?: string;
+  imageMediaType?: string;
   /** Label for logging (e.g. "step-7-findings") */
   label?: string;
+  /** Override het model voor deze call (de router zet dit; default DEFAULT_MODEL) */
+  model?: string;
 }
 
 export interface OpenRouterResponse {
@@ -87,15 +95,34 @@ export async function callOpenRouter(opts: OpenRouterRequest): Promise<OpenRoute
     temperature = 0.1,
     jsonMode = false,
     label = "unknown",
+    model = DEFAULT_MODEL,
   } = opts;
 
+  // SEC1: weer secrets en maskeer PII voordat de payload naar de provider gaat.
+  // Dit is het ene chokepoint, dus elke LLM-call is gedekt.
+  const sysSan = sanitizeLLMPayload(systemPrompt ?? "");
+  const userSan = sanitizeLLMPayload(userMessage ?? "");
+  if (!sysSan.report.clean || !userSan.report.clean) {
+    const secrets = sysSan.report.redactedSecrets + userSan.report.redactedSecrets;
+    const emails = sysSan.report.maskedEmails + userSan.report.maskedEmails;
+    logger.warn(`[security] LLM-payload gesaneerd (${label}): secrets=${secrets}, emails=${emails}`);
+  }
+
   const body: Record<string, unknown> = {
-    model: DEFAULT_MODEL,
+    model,
     max_tokens: maxTokens,
     temperature,
     messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
+      { role: "system", content: sysSan.sanitized },
+      {
+        role: "user",
+        content: opts.imageBase64
+          ? [
+              { type: "text", text: userSan.sanitized },
+              { type: "image_url", image_url: { url: `data:${opts.imageMediaType ?? "image/jpeg"};base64,${opts.imageBase64}` } },
+            ]
+          : userSan.sanitized,
+      },
     ],
   };
 
@@ -197,8 +224,9 @@ export async function callOpenRouter(opts: OpenRouterRequest): Promise<OpenRoute
       if (attempt < MAX_RETRIES) {
         retries++;
 
-        // Don't retry on 4xx client errors (except 429 rate limit)
-        if (lastError.message.includes("OpenRouter 4") && !lastError.message.includes("429")) {
+        // SEC3: getypeerde retry-beslissing in plaats van string-matching.
+        // Niet-retrybaar (auth, permission, bad_request) stopt direct.
+        if (!classifyLLMError(lastError).retryable) {
           break;
         }
 
@@ -208,7 +236,10 @@ export async function callOpenRouter(opts: OpenRouterRequest): Promise<OpenRoute
     }
   }
 
-  throw lastError ?? new Error(`OpenRouter call failed after ${MAX_RETRIES + 1} attempts`);
+  const finalError = lastError ?? new Error(`OpenRouter call failed after ${MAX_RETRIES + 1} attempts`);
+  // SEC3: hang de getypeerde classificatie aan de fout voor een fallback-laag.
+  (finalError as Error & { llmError?: LLMErrorClassification }).llmError = classifyLLMError(finalError);
+  throw finalError;
 }
 
 function sleep(ms: number): Promise<void> {

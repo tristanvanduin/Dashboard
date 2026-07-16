@@ -35,6 +35,21 @@ export interface PersistedSprintItemRow {
   updated_at?: string | null;
 }
 
+/**
+ * LET OP voor de volgende lezer: dit pakket wordt als JSON MET een prefix opgeslagen in de
+ * kolom sprint_hypotheses.RATIONALE. Die kolom draagt dus twee dingen, afhankelijk van het
+ * schrijfpad: extract-structured zet er de leesbare onderbouwing van het voorstel in, en de
+ * accept- of reject-route overschrijft dat met dit pakket.
+ *
+ * Dat is GEEN dataverlies: why_we_think_this hieronder draagt diezelfde onderbouwing, plus
+ * de gekoppelde findings, threads en taken. De route vervangt dus een losse zin door een
+ * rijker pakket dat die zin bevat.
+ *
+ * Wat het wel is: een naam die liegt. Wie `rationale` uitleest verwacht proza en krijgt
+ * JSON. De decoder hieronder vangt beide vormen op (met prefix, of kale JSON), dus het
+ * werkt. Een eigen jsonb-kolom zou netter zijn, maar dat kost een migratie plus een ingreep
+ * in een route met eigen tests, voor nul functionele winst. Bewust niet gedaan.
+ */
 export interface MonthlyHypothesisPersistenceMetadata {
   source_hypothesis_id: string;
   source_structured_created_at: string;

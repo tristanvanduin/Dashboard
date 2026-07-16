@@ -14,6 +14,7 @@ import {
   markProgressFailed,
   updateProgressPhase,
 } from "@/lib/progress/server";
+import { logger } from "@/lib/logger";
 
 /**
  * GET /api/analysis/pdf?client_id=xxx&sop_type=weekly|biweekly|monthly&client_name=yyy
@@ -260,7 +261,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (err) {
-    console.error("[sop-pdf] Generation failed:", err);
+    logger.error("[sop-pdf] Generation failed:", err);
     await markProgressFailed(supabase, {
       jobId,
       errorMessage: err instanceof Error ? err.message : "PDF generatie mislukt",
