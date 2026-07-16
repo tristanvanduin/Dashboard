@@ -1,0 +1,1476 @@
+════════════════════════════════════════════════════════════════
+FILE 1: lib/client-reports/pdf-renderer.ts
+════════════════════════════════════════════════════════════════
+/**
+ * Client Report PDF renderer v3 — Professional edition.
+ *
+ * Structure:
+ *   Page 1: Cover page (branded, client name, month)
+ *   Page 2: Table of contents + KPI summary cards
+ *   Page 3+: Per-metric sections (each with label, headline, bullets, body, bar chart)
+ *   Final page: Actions + Planning (structured with numbered groups)
+ */
+
+import React from "react";
+import { Document, Page, Text, View, Image, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
+
+// ── Types ─────────────────────────────────────────────────────────────────
+
+interface MetricPoint { month: string; value: number }
+interface KpiCard { label: string; current: number; previous: number; changePct: number; yoyChangePct: number | null; format: "number" | "currency" | "percent" | "decimal" }
+interface MetricSection { id: string; label: string; heading: string; body: string; bullets: string[]; chartData: MetricPoint[]; chartLabel: string; chartType: "bar" | "line" }
+
+export interface ReportPdfProps {
+  clientName: string;
+  title: string;
+  reportMonth: string;
+  reportYear: number;
+  generatedAt: string;
+  kpiCards: KpiCard[];
+  metricSections: MetricSection[];
+  actionSection: { heading: string; body: string };
+  planningSection: { heading: string; body: string };
+  /** Optional: Ranking Masters logo URL or path */
+  rmLogoUrl?: string;
+  /** Optional: Client logo URL or path */
+  clientLogoUrl?: string;
+}
+
+// ── Colors ─────────────────────────────────────────────────────────────────
+
+const orange = "#E87722";
+const blue = "#1e3a8a";
+const green = "#16a34a";
+const red = "#dc2626";
+const gray = "#6b7280";
+const grayLight = "#f9fafb";
+const grayBorder = "#e5e7eb";
+const dark = "#111827";
+const white = "#ffffff";
+
+// ── Styles ─────────────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
+  page: { padding: 40, fontFamily: "Helvetica", fontSize: 9, color: dark },
+  // Cover
+  coverPage: { padding: 0, fontFamily: "Helvetica" },
+  coverTop: { backgroundColor: blue, height: "45%", justifyContent: "flex-end", paddingHorizontal: 60, paddingBottom: 40 },
+  coverBottom: { height: "55%", paddingHorizontal: 60, paddingTop: 50, justifyContent: "space-between" },
+  coverTitle: { fontSize: 36, fontWeight: "bold", color: white, lineHeight: 1.2 },
+  coverSubtitle: { fontSize: 14, color: white, opacity: 0.8, marginTop: 8 },
+  coverClient: { fontSize: 28, fontWeight: "bold", color: dark },
+  coverMonth: { fontSize: 16, color: gray, marginTop: 4 },
+  coverBrand: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", paddingBottom: 40 },
+  coverBrandName: { fontSize: 14, fontWeight: "bold", color: orange },
+  coverBrandSub: { fontSize: 8, color: gray },
+  coverDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: orange, marginLeft: 4 },
+  // TOC
+  tocTitle: { fontSize: 24, fontWeight: "bold", color: dark, marginBottom: 20 },
+  tocItem: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
+  tocDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: orange, marginRight: 12 },
+  tocText: { fontSize: 12, color: dark },
+  // Header (content pages)
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+  headerTitle: { fontSize: 10, fontWeight: "bold", color: orange },
+  headerRight: { fontSize: 8, color: gray },
+  divider: { height: 2, backgroundColor: orange, marginBottom: 16, borderRadius: 1 },
+  // KPI cards
+  kpiGrid: { flexDirection: "row", gap: 10, marginBottom: 20 },
+  kpiCard: { flex: 1, borderRadius: 6, padding: 12, borderWidth: 1, borderColor: grayBorder },
+  kpiLabel: { fontSize: 8, color: gray, marginBottom: 4 },
+  kpiRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  kpiValue: { fontSize: 20, fontWeight: "bold", color: dark },
+  kpiChange: { fontSize: 9, fontWeight: "bold", marginTop: 2 },
+  kpiPrev: { fontSize: 8, color: gray, marginTop: 3 },
+  kpiYoy: { fontSize: 7, color: gray, marginTop: 2 },
+  // Metric section
+  sectionWrap: { marginBottom: 20 },
+  sectionLabel: { fontSize: 8, color: orange, fontWeight: "bold", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 },
+  sectionHeading: { fontSize: 16, fontWeight: "bold", color: dark, lineHeight: 1.25, marginBottom: 8 },
+  sectionBullet: { fontSize: 9, fontWeight: "bold", color: dark, marginBottom: 2.5, paddingLeft: 2 },
+  sectionBody: { fontSize: 9, lineHeight: 1.6, color: dark, marginTop: 6 },
+  sectionSep: { height: 1, backgroundColor: grayBorder, marginVertical: 16 },
+  // Bar chart
+  chartWrap: { marginTop: 12, marginBottom: 4 },
+  barRow: { flexDirection: "row", alignItems: "flex-end", gap: 3 },
+  barCol: { alignItems: "center" },
+  bar: { borderRadius: 2, backgroundColor: orange },
+  barLabel: { fontSize: 6, color: gray, marginTop: 3 },
+  // Action section
+  actionLabel: { fontSize: 8, color: orange, fontWeight: "bold", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 },
+  actionHeading: { fontSize: 16, fontWeight: "bold", color: dark, marginBottom: 10 },
+  actionGroup: { marginBottom: 8 },
+  actionGroupTitle: { fontSize: 10, fontWeight: "bold", color: dark, marginBottom: 3 },
+  actionGroupBody: { fontSize: 9, lineHeight: 1.5, color: dark, paddingLeft: 4 },
+  // Footer
+  footer: { position: "absolute", bottom: 24, left: 40, right: 40, flexDirection: "row", justifyContent: "space-between" },
+  footerText: { fontSize: 7, color: gray },
+});
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function fmtValue(v: number, format: string): string {
+  if (format === "currency") return `€${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.round(v))}`;
+  if (format === "percent") return `${v.toFixed(1)}%`;
+  if (format === "decimal") return v.toFixed(2);
+  return new Intl.NumberFormat("nl-NL").format(Math.round(v));
+}
+
+function changeColor(pct: number, invert = false): string {
+  const positive = invert ? pct < 0 : pct > 0;
+  return positive ? green : pct === 0 ? gray : red;
+}
+
+function isInvertMetric(label: string): boolean {
+  return label === "CPA" || label === "Kosten" || label === "ACOS";
+}
+
+/**
+ * Parse action/planning body text into structured groups.
+ * Splits on numbered patterns like "1. Title:" or "1. Title\n"
+ */
+function parseActionGroups(text: string): Array<{ title: string; body: string }> {
+  const groups: Array<{ title: string; body: string }> = [];
+  // Try splitting on numbered patterns
+  const parts = text.split(/(?=\d+\.\s+)/);
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const match = trimmed.match(/^\d+\.\s*(.+?)(?::\s*|\n)([\s\S]*)$/);
+    if (match) {
+      groups.push({ title: match[1].trim(), body: match[2].trim() });
+    } else {
+      groups.push({ title: "", body: trimmed });
+    }
+  }
+  return groups.length > 0 ? groups : [{ title: "", body: text }];
+}
+
+// ── Bar Chart ──────────────────────────────────────────────────────────────
+
+function BarChart({ data, height = 55 }: { data: MetricPoint[]; height?: number }) {
+  if (data.length === 0) return null;
+  const maxVal = Math.max(...data.map((d) => d.value), 1);
+  const barW = Math.max(Math.floor(620 / data.length) - 4, 6);
+
+  return React.createElement(View, { style: s.chartWrap },
+    React.createElement(View, { style: s.barRow },
+      ...data.map((d, i) => {
+        const h = Math.max(Math.round((d.value / maxVal) * height), 2);
+        const isLast = i === data.length - 1;
+        return React.createElement(View, { key: i, style: { ...s.barCol, width: barW } },
+          React.createElement(View, { style: { ...s.bar, width: barW, height: h, backgroundColor: isLast ? orange : "#f4a460" } }),
+          React.createElement(Text, { style: s.barLabel }, d.month),
+        );
+      }),
+    ),
+  );
+}
+
+// ── Footer ─────────────────────────────────────────────────────────────────
+
+function Footer({ left, rmLogoUrl }: { left: string; rmLogoUrl?: string }) {
+  return React.createElement(View, { style: s.footer, fixed: true },
+    React.createElement(Text, { style: s.footerText }, left),
+    React.createElement(View, { style: { flexDirection: "row", alignItems: "center", gap: 6 } },
+      React.createElement(Text, {
+        style: s.footerText,
+        render: ({ pageNumber, totalPages }: { pageNumber: number; totalPages: number }) => `Pagina ${pageNumber} / ${totalPages}`,
+      }),
+      rmLogoUrl
+        ? React.createElement(Image, { src: rmLogoUrl, style: { height: 18, width: 18, objectFit: "contain" as const } })
+        : null,
+      React.createElement(View, {},
+        React.createElement(Text, { style: { fontSize: 7, fontWeight: "bold", color: orange } }, "Ranking Masters"),
+        React.createElement(Text, { style: { fontSize: 5, color: gray } }, "De #1 SEM specialist in de Benelux"),
+      ),
+    ),
+  );
+}
+
+// ── PDF Document ───────────────────────────────────────────────────────────
+
+function ClientReportPdf(props: ReportPdfProps) {
+  const { clientName, title, reportMonth, reportYear, generatedAt, kpiCards, metricSections, actionSection, planningSection, rmLogoUrl, clientLogoUrl } = props;
+  const dateStr = new Date(generatedAt).toLocaleDateString("nl-NL", { day: "numeric", month: "long", year: "numeric" });
+
+  const tocItems = [
+    "Resultaten " + reportMonth.slice(0, 3).toLowerCase(),
+    ...metricSections.map((s) => s.label),
+    "Acties komende maand",
+    "Planning & Vooruitblik",
+  ];
+
+  return React.createElement(Document, {},
+
+    // ══════════════════════════════════════════════════════════════
+    // COVER PAGE
+    // ══════════════════════════════════════════════════════════════
+    React.createElement(Page, { size: "A4", orientation: "landscape", style: s.coverPage },
+      // Blue top half
+      React.createElement(View, { style: s.coverTop },
+        React.createElement(Text, { style: s.coverTitle }, "Ranking Masters"),
+        React.createElement(Text, { style: s.coverSubtitle }, "Maandrapportage"),
+      ),
+      // White bottom half
+      React.createElement(View, { style: s.coverBottom },
+        React.createElement(View, {},
+          clientLogoUrl
+            ? React.createElement(Image, { src: clientLogoUrl, style: { height: 50, maxWidth: 200, objectFit: "contain" as const, marginBottom: 12 } })
+            : null,
+          React.createElement(View, { style: { flexDirection: "row", alignItems: "center" } },
+            React.createElement(Text, { style: s.coverClient }, clientName),
+            React.createElement(View, { style: s.coverDot }),
+          ),
+          React.createElement(Text, { style: s.coverMonth }, `${reportMonth} ${reportYear}`),
+        ),
+        React.createElement(View, { style: s.coverBrand },
+          rmLogoUrl
+            ? React.createElement(View, { style: { flexDirection: "row", alignItems: "center", gap: 8 } },
+                React.createElement(Image, { src: rmLogoUrl, style: { height: 30, width: 30, objectFit: "contain" as const } }),
+                React.createElement(View, {},
+                  React.createElement(Text, { style: s.coverBrandName }, "Ranking Masters"),
+                  React.createElement(Text, { style: s.coverBrandSub }, "De #1 SEM specialist in de Benelux"),
+                ),
+              )
+            : React.createElement(View, {},
+                React.createElement(Text, { style: s.coverBrandName }, "Ranking Masters"),
+                React.createElement(Text, { style: s.coverBrandSub }, "De #1 SEM specialist in de Benelux"),
+              ),
+          React.createElement(Text, { style: { fontSize: 8, color: gray } }, dateStr),
+        ),
+      ),
+    ),
+
+    // ══════════════════════════════════════════════════════════════
+    // TOC + KPI SUMMARY
+    // ══════════════════════════════════════════════════════════════
+    React.createElement(Page, { size: "A4", orientation: "landscape", style: s.page },
+
+      // Table of contents
+      React.createElement(Text, { style: s.tocTitle }, "Overzicht"),
+      React.createElement(View, { style: { marginBottom: 24 } },
+        ...tocItems.map((item, i) =>
+          React.createElement(View, { key: i, style: s.tocItem },
+            React.createElement(View, { style: s.tocDot }),
+            React.createElement(Text, { style: s.tocText }, item),
+          ),
+        ),
+      ),
+
+      // KPI Summary Cards
+      React.createElement(Text, { style: { fontSize: 12, fontWeight: "bold", color: dark, marginBottom: 10 } },
+        `Samenvatting ${reportMonth} ${reportYear}`
+      ),
+      React.createElement(View, { style: s.kpiGrid },
+        ...kpiCards.map((kpi, i) =>
+          React.createElement(View, { key: i, style: s.kpiCard },
+            React.createElement(View, { style: s.kpiRow },
+              React.createElement(Text, { style: s.kpiLabel }, kpi.label),
+              React.createElement(Text, { style: { ...s.kpiChange, color: changeColor(kpi.changePct, isInvertMetric(kpi.label)) } },
+                `${kpi.changePct > 0 ? "+" : ""}${kpi.changePct}%`),
+            ),
+            React.createElement(Text, { style: s.kpiValue }, fmtValue(kpi.current, kpi.format)),
+            React.createElement(Text, { style: s.kpiPrev }, `(${fmtValue(kpi.previous, kpi.format)})`),
+            kpi.yoyChangePct != null
+              ? React.createElement(Text, { style: s.kpiYoy }, `YoY: ${kpi.yoyChangePct > 0 ? "+" : ""}${kpi.yoyChangePct}%`)
+              : null,
+          ),
+        ),
+      ),
+
+      Footer({ left: `${clientName}  |  ${reportMonth} ${reportYear}`, rmLogoUrl }),
+    ),
+
+    // ══════════════════════════════════════════════════════════════
+    // METRIC SECTIONS
+    // ══════════════════════════════════════════════════════════════
+    React.createElement(Page, { size: "A4", orientation: "landscape", style: s.page, wrap: true },
+
+      // Mini header
+      React.createElement(View, { style: s.header },
+        React.createElement(Text, { style: s.headerTitle }, `Resultaten ${reportMonth} ${reportYear}`),
+        React.createElement(Text, { style: s.headerRight }, `${clientName}  |  Ranking Masters`),
+      ),
+      React.createElement(View, { style: s.divider }),
+
+      ...metricSections.flatMap((section, i) => {
+        const elements: React.ReactElement[] = [];
+        if (i > 0) elements.push(React.createElement(View, { key: `sep-${i}`, style: s.sectionSep }));
+
+        elements.push(
+          React.createElement(View, { key: `ms-${i}`, style: s.sectionWrap, wrap: false },
+            // Label
+            React.createElement(Text, { style: s.sectionLabel }, section.label),
+            // Headline with orange dot
+            React.createElement(View, { style: { flexDirection: "row", alignItems: "flex-start" } },
+              React.createElement(Text, { style: s.sectionHeading }, section.heading),
+            ),
+            // Bullets
+            ...section.bullets.map((b, j) =>
+              React.createElement(Text, { key: `b-${i}-${j}`, style: s.sectionBullet }, `•  ${b}`),
+            ),
+            // Body
+            React.createElement(Text, { style: s.sectionBody }, section.body),
+            // Chart
+            BarChart({ data: section.chartData }),
+          ),
+        );
+        return elements;
+      }),
+
+      // ── Actions section ──
+      React.createElement(View, { style: s.sectionSep }),
+      React.createElement(View, { wrap: false },
+        React.createElement(Text, { style: s.actionLabel }, "Acties komende maand"),
+        React.createElement(Text, { style: s.actionHeading }, actionSection.heading),
+        ...parseActionGroups(actionSection.body).map((group, i) =>
+          React.createElement(View, { key: `ag-${i}`, style: s.actionGroup },
+            group.title
+              ? React.createElement(Text, { style: s.actionGroupTitle }, `${i + 1}. ${group.title}`)
+              : null,
+            React.createElement(Text, { style: s.actionGroupBody }, group.body),
+          ),
+        ),
+      ),
+
+      // ── Planning section ──
+      React.createElement(View, { style: s.sectionSep }),
+      React.createElement(View, { wrap: false },
+        React.createElement(Text, { style: s.actionLabel }, "Planning & Vooruitblik"),
+        React.createElement(Text, { style: s.actionHeading }, planningSection.heading),
+        React.createElement(Text, { style: { fontSize: 9, lineHeight: 1.6, color: dark } }, planningSection.body),
+      ),
+
+      Footer({ left: `${clientName}  |  Maandrapportage`, rmLogoUrl }),
+    ),
+  );
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────
+
+export async function renderReportPdf(opts: ReportPdfProps): Promise<Buffer> {
+  const doc = ClientReportPdf(opts);
+  return await renderToBuffer(doc);
+}
+
+
+════════════════════════════════════════════════════════════════
+FILE 2: app/api/client-reports/route.ts
+════════════════════════════════════════════════════════════════
+import { NextRequest } from "next/server";
+import { getSupabase, getOpenRouterKey, fetchClientContext } from "@/lib/analysis/helpers";
+import { callOpenRouter } from "@/lib/analysis/openrouter-client";
+import { computeAnalysisTargets } from "@/lib/analysis/compute-targets";
+
+export const maxDuration = 120;
+
+// ── Types ─────────────────────────────────────────────────────────────────
+
+interface MetricPoint {
+  month: string;
+  value: number;
+}
+
+interface KpiCard {
+  label: string;
+  current: number;
+  previous: number;
+  changePct: number;
+  yoyCurrent: number | null;
+  yoyPrevious: number | null;
+  yoyChangePct: number | null;
+  format: "number" | "currency" | "percent" | "decimal";
+}
+
+interface MetricSection {
+  id: string;
+  label: string;
+  heading: string;
+  body: string;
+  bullets: string[];
+  chartData: MetricPoint[];
+  /** Optional second chart */
+  chartData2?: MetricPoint[];
+  chartLabel: string;
+  chartLabel2?: string;
+  chartType: "bar" | "line";
+  chartType2?: "bar" | "line";
+}
+
+interface ReportData {
+  title: string;
+  reportMonth: string;
+  reportYear: number;
+  kpiCards: KpiCard[];
+  metricSections: MetricSection[];
+  actionSection: { heading: string; body: string };
+  planningSection: { heading: string; body: string };
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+const MONTH_NAMES_FULL = ["Januari", "Februari", "Maart", "April", "Mei", "Juni", "Juli", "Augustus", "September", "Oktober", "November", "December"];
+const MONTH_NAMES_SHORT = ["Jan", "Feb", "Mrt", "Apr", "Mei", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dec"];
+
+function pct(a: number, b: number): number | null {
+  if (b === 0) return null;
+  return Math.round(((a - b) / Math.abs(b)) * 1000) / 10;
+}
+
+function findMonth(rows: Array<Record<string, unknown>>, monthStr: string): Record<string, unknown> | undefined {
+  return rows.find((r) => String(r.month ?? "").startsWith(monthStr));
+}
+
+// ── Prompt ─────────────────────────────────────────────────────────────────
+
+function buildReportPrompt(clientName: string): string {
+  return `Je bent een senior SEA account manager bij Ranking Masters die een professioneel klantrapport schrijft.
+Het rapport is bedoeld voor de klant zelf.
+
+## KRITIEKE STIJLREGELS
+
+### 1. Koppen zijn ALTIJD concluderend
+Koppen vertellen een verhaal in 1 zin. NOOIT observerend of generiek.
+- FOUT: "Conversie overzicht maart", "Performance analyse", "Impressies"
+- GOED: "Bereik groeit in februari, terwijl de focus op ROAS zorgt voor relevanter verkeer"
+- GOED: "Lagere CPC ondersteunt de ROAS-sturing"
+- GOED: "Seizoensmatige volumestijging gaat samen met rendementverhoging"
+- GOED: "Schaalfase door uitbreiding assortiment drukt tijdelijk rendement"
+
+### 2. NOOIT extreme of sturende taal
+VERBODEN: mega, extreem, fantastisch, geweldig, indrukwekkend, spectaculair, enorm, ongelofelijk
+TOEGESTAAN: recordmaand, sterk, gezond, solide, stabiel, opvallend, consistent, aandachtspunt, uitdaging
+
+### 3. Negatieve cijfers: altijd professioneel perspectief
+Koppel ALTIJD aan een plan, verklaring of context. NOOIT letterlijk geruststellen.
+- "De hogere CPA is het directe gevolg van de overstap naar tROAS-sturing, die we bewust hebben gemaakt."
+- "Hoewel het volume terugloopt, verbetert de kwaliteit van het verkeer — de conversieratio steeg met 18%."
+
+### 4. Schrijfstijl
+Professioneel, actieve zinnen, concrete cijfers, Nederlands. Schrijf als strategisch partner.
+
+## JE ONTVANGT
+Per metric: de actuele en vorige maandwaarden, MoM en YoY verschil (al berekend).
+Plus: afgeronde werkzaamheden, sprint planning, wijzigingen.
+
+## OUTPUT FORMAAT
+Retourneer ALLEEN valid JSON:
+
+{
+  "metric_sections": [
+    {
+      "id": "impressies",
+      "heading": "string (concluderend, vertelt het verhaal van deze metric)",
+      "body": "string (2-4 zinnen analyse, koppel aan strategie/seizoen/wijzigingen)"
+    },
+    { "id": "cpc", "heading": "...", "body": "..." },
+    { "id": "conversies", "heading": "...", "body": "..." },
+    { "id": "omzet_roas", "heading": "...", "body": "..." },
+    { "id": "impression_share", "heading": "...", "body": "..." }
+  ],
+  "action_section": {
+    "heading": "string (concluderend over komende acties)",
+    "body": "string — GEBRUIK DIT FORMAAT:\n1. Actiegroep titel: Korte beschrijving van de actie en het verwachte effect.\n2. Tweede actiegroep: Beschrijving.\n3. Derde actiegroep: Beschrijving.\nElke groep op een nieuwe regel, genummerd. Max 4-5 groepen."
+  },
+  "planning_section": {
+    "heading": "string (concluderend over strategie komende periode)",
+    "body": "string (strategisch perspectief in 2-4 zinnen, met concrete doelen en tijdshorizon)"
+  }
+}
+
+BELANGRIJK: De heading per metric is CONCLUDEREND. NIET de metric-naam herhalen. Vertel wat er aan de hand is.`;
+}
+
+// ── Route handlers ────────────────────────────────────────────────────────
+
+export async function POST(request: NextRequest) {
+  const supabase = getSupabase();
+  if (!supabase) return Response.json({ error: "Supabase niet geconfigureerd" }, { status: 500 });
+
+  const apiKey = getOpenRouterKey();
+  if (!apiKey) return Response.json({ error: "OPENROUTER_API_KEY niet geconfigureerd" }, { status: 500 });
+
+  let clientId: string;
+  let clientName: string;
+  try {
+    const body = await request.json();
+    clientId = body.client_id;
+    clientName = body.client_name || clientId;
+    if (!clientId) throw new Error("missing");
+  } catch {
+    return Response.json({ error: "Verwacht: { client_id, client_name }" }, { status: 400 });
+  }
+
+  try {
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const lastMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+    const lastMonthYear = currentMonth === 1 ? now.getFullYear() - 1 : now.getFullYear();
+    const reportMonthLabel = MONTH_NAMES_FULL[lastMonth - 1];
+    const reportMonthShort = MONTH_NAMES_SHORT[lastMonth - 1];
+
+    // Previous month (for MoM)
+    const prevMonth = lastMonth === 1 ? 12 : lastMonth - 1;
+    const prevMonthYear = lastMonth === 1 ? lastMonthYear - 1 : lastMonthYear;
+
+    // Same month last year (for YoY)
+    const yoyYear = lastMonthYear - 1;
+
+    const lastMonthStr = `${lastMonthYear}-${String(lastMonth).padStart(2, "0")}`;
+    const prevMonthStr = `${prevMonthYear}-${String(prevMonth).padStart(2, "0")}`;
+    const yoyMonthStr = `${yoyYear}-${String(lastMonth).padStart(2, "0")}`;
+
+    // 13 months back for chart data
+    const thirteenMonthsAgo = new Date(lastMonthYear, lastMonth - 14, 1).toISOString().split("T")[0];
+    const periodEnd = `${lastMonthYear}-${String(lastMonth).padStart(2, "0")}-28`;
+    const daysAgo60 = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+
+    // ── Fetch all data ───────────────────────────────────────────
+
+    const [
+      accountMonthlyRes, isRes,
+      sprintItemsRes, completedTasksRes, changeHistoryRes,
+      clientCtx, targetResult, latestSopRes, hypothesesRes,
+    ] = await Promise.all([
+      supabase.from("ads_account_monthly").select("*").eq("client_id", clientId).gte("month", thirteenMonthsAgo).lte("month", periodEnd).order("month"),
+      supabase.from("ads_campaign_impression_share").select("month, search_impression_share").eq("client_id", clientId).gte("month", thirteenMonthsAgo).lte("month", periodEnd).order("month"),
+      supabase.from("sprint_items").select("task, status, owner, created_at").eq("client_id", clientId).order("created_at", { ascending: false }).limit(50),
+      supabase.from("sop_tasks").select("title, description, action_type, affected_campaign, priority, status, due_date").eq("client_id", clientId).in("status", ["completed", "open"]).order("analysis_date", { ascending: false }).limit(40),
+      supabase.from("ads_change_history").select("change_datetime, change_type, campaign_name, old_value, new_value").eq("client_id", clientId).gte("change_datetime", daysAgo60).order("change_datetime", { ascending: false }).limit(30),
+      fetchClientContext(supabase, clientId),
+      computeAnalysisTargets(supabase, clientId),
+      supabase.from("sop_analysis_output").select("output, sop_type, analysis_date").eq("client_id", clientId).order("analysis_date", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("sprint_hypotheses").select("hypothesis, expected_result, status, ice_total").eq("client_id", clientId).in("status", ["pending", "accepted", "completed"]).order("ice_total", { ascending: false }).limit(15),
+    ]);
+
+    const accountData = (accountMonthlyRes.data ?? []) as Array<Record<string, unknown>>;
+    const isData = (isRes.data ?? []) as Array<Record<string, unknown>>;
+
+    // ── Compute per-metric MoM + YoY ─────────────────────────────
+
+    const cur = findMonth(accountData, lastMonthStr);
+    const prev = findMonth(accountData, prevMonthStr);
+    const yoy = findMonth(accountData, yoyMonthStr);
+
+    const g = (row: Record<string, unknown> | undefined, key: string): number => Number(row?.[key] ?? 0);
+
+    // KPI Cards (6 cards like original reports)
+    const kpiCards: KpiCard[] = [
+      { label: "Conversies", current: g(cur, "conversions"), previous: g(prev, "conversions"), changePct: pct(g(cur, "conversions"), g(prev, "conversions")) ?? 0, yoyCurrent: g(yoy, "conversions") || null, yoyPrevious: null, yoyChangePct: yoy ? pct(g(cur, "conversions"), g(yoy, "conversions")) : null, format: "number" },
+      { label: "Omzet", current: g(cur, "conversions_value"), previous: g(prev, "conversions_value"), changePct: pct(g(cur, "conversions_value"), g(prev, "conversions_value")) ?? 0, yoyCurrent: g(yoy, "conversions_value") || null, yoyPrevious: null, yoyChangePct: yoy ? pct(g(cur, "conversions_value"), g(yoy, "conversions_value")) : null, format: "currency" },
+      { label: "Kosten", current: g(cur, "cost"), previous: g(prev, "cost"), changePct: pct(g(cur, "cost"), g(prev, "cost")) ?? 0, yoyCurrent: g(yoy, "cost") || null, yoyPrevious: null, yoyChangePct: yoy ? pct(g(cur, "cost"), g(yoy, "cost")) : null, format: "currency" },
+      { label: "ROAS", current: g(cur, "cost") > 0 ? g(cur, "conversions_value") / g(cur, "cost") * 100 : 0, previous: g(prev, "cost") > 0 ? g(prev, "conversions_value") / g(prev, "cost") * 100 : 0, changePct: 0, yoyCurrent: null, yoyPrevious: null, yoyChangePct: null, format: "percent" },
+      { label: "CPA", current: g(cur, "conversions") > 0 ? g(cur, "cost") / g(cur, "conversions") : 0, previous: g(prev, "conversions") > 0 ? g(prev, "cost") / g(prev, "conversions") : 0, changePct: 0, yoyCurrent: null, yoyPrevious: null, yoyChangePct: null, format: "currency" },
+    ];
+    // Calculate ROAS and CPA change% after
+    kpiCards[3].changePct = pct(kpiCards[3].current, kpiCards[3].previous) ?? 0;
+    if (yoy) { kpiCards[3].yoyChangePct = pct(kpiCards[3].current, g(yoy, "cost") > 0 ? g(yoy, "conversions_value") / g(yoy, "cost") * 100 : 0); }
+    kpiCards[4].changePct = pct(kpiCards[4].current, kpiCards[4].previous) ?? 0;
+    if (yoy && g(yoy, "conversions") > 0) { kpiCards[4].yoyChangePct = pct(kpiCards[4].current, g(yoy, "cost") / g(yoy, "conversions")); }
+
+    // ── Build chart data (13 months) ─────────────────────────────
+
+    function buildChartData(key: string): MetricPoint[] {
+      return accountData.map((r) => ({
+        month: MONTH_NAMES_SHORT[new Date(String(r.month)).getMonth()] ?? String(r.month),
+        value: Number(r[key] ?? 0),
+      }));
+    }
+
+    function buildComputedChart(fn: (r: Record<string, unknown>) => number): MetricPoint[] {
+      return accountData.map((r) => ({
+        month: MONTH_NAMES_SHORT[new Date(String(r.month)).getMonth()] ?? String(r.month),
+        value: fn(r),
+      }));
+    }
+
+    // IS chart (from campaign data, aggregated)
+    const isChartData: MetricPoint[] = [];
+    const isMonths = new Map<string, number[]>();
+    for (const r of isData) {
+      const m = String(r.month ?? "").slice(0, 7);
+      if (!isMonths.has(m)) isMonths.set(m, []);
+      const val = Number(r.search_impression_share ?? 0);
+      if (val > 0) isMonths.get(m)!.push(val);
+    }
+    for (const [m, vals] of isMonths) {
+      const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+      isChartData.push({ month: MONTH_NAMES_SHORT[new Date(m + "-01").getMonth()] ?? m, value: Math.round(avg * 100) / 100 });
+    }
+
+    // Format bullets for LLM
+    const fmt = (v: number, f: string) => {
+      if (f === "currency") return `€${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)}`;
+      if (f === "percent") return `${v.toFixed(2)}%`;
+      if (f === "decimal") return v.toFixed(2);
+      return new Intl.NumberFormat("nl-NL").format(Math.round(v));
+    };
+
+    const metricBullets = (label: string, curVal: number, prevVal: number, yoyVal: number | null, format: string) => {
+      const mom = pct(curVal, prevVal);
+      const yoyPct = yoyVal ? pct(curVal, yoyVal) : null;
+      const lines = [`${label}: ${fmt(prevVal, format)} → ${fmt(curVal, format)} (${mom != null ? (mom > 0 ? "+" : "") + mom + "% m/m" : "n.v.t."})`];
+      if (yoyPct != null) lines.push(`Jaar-op-jaar: ${fmt(yoyVal!, format)} → ${fmt(curVal, format)} (${yoyPct > 0 ? "+" : ""}${yoyPct}% YoY)`);
+      return lines;
+    };
+
+    // ── Build LLM user message with computed data ────────────────
+
+    const sprintItems = sprintItemsRes.data ?? [];
+    const completedTasks = completedTasksRes.data ?? [];
+    const changeHistory = changeHistoryRes.data ?? [];
+    const hypotheses = hypothesesRes.data ?? [];
+    const { goalsSection } = clientCtx;
+
+    const doneItems = sprintItems.filter((i) => i.status === "done");
+    const openItems = sprintItems.filter((i) => i.status !== "done" && i.status !== "expired");
+    const doneTasks = completedTasks.filter((t) => t.status === "completed");
+    const openTasks = completedTasks.filter((t) => t.status === "open");
+
+    const curIS = isChartData.length > 0 ? isChartData[isChartData.length - 1]?.value : null;
+    const prevIS = isChartData.length > 1 ? isChartData[isChartData.length - 2]?.value : null;
+
+    const userMessage = `Schrijf een maandrapportage voor ${clientName} over ${reportMonthLabel} ${lastMonthYear}.
+
+## Doelstellingen
+${goalsSection}
+
+## Per-metric data (al berekend, gebruik deze exacte cijfers)
+
+### Impressies
+${metricBullets("Impressies", g(cur, "impressions"), g(prev, "impressions"), yoy ? g(yoy, "impressions") : null, "number").join("\n")}
+${metricBullets("Klikken", g(cur, "clicks"), g(prev, "clicks"), yoy ? g(yoy, "clicks") : null, "number").join("\n")}
+${metricBullets("CTR", g(cur, "ctr") * 100, g(prev, "ctr") * 100, yoy ? g(yoy, "ctr") * 100 : null, "decimal").join("\n")}
+
+### CPC
+${metricBullets("CPC", g(cur, "avg_cpc"), g(prev, "avg_cpc"), yoy ? g(yoy, "avg_cpc") : null, "currency").join("\n")}
+
+### Conversies
+${metricBullets("Conversies", g(cur, "conversions"), g(prev, "conversions"), yoy ? g(yoy, "conversions") : null, "number").join("\n")}
+${metricBullets("Conversieratio", g(cur, "conversion_rate") * 100, g(prev, "conversion_rate") * 100, yoy ? g(yoy, "conversion_rate") * 100 : null, "decimal").join("\n")}
+${metricBullets("Kosten per conversie", kpiCards[4].current, kpiCards[4].previous, yoy && g(yoy, "conversions") > 0 ? g(yoy, "cost") / g(yoy, "conversions") : null, "currency").join("\n")}
+
+### Omzet & ROAS
+${metricBullets("Conversiewaarde", g(cur, "conversions_value"), g(prev, "conversions_value"), yoy ? g(yoy, "conversions_value") : null, "currency").join("\n")}
+${metricBullets("Kosten", g(cur, "cost"), g(prev, "cost"), yoy ? g(yoy, "cost") : null, "currency").join("\n")}
+${metricBullets("ROAS", kpiCards[3].current, kpiCards[3].previous, yoy && g(yoy, "cost") > 0 ? g(yoy, "conversions_value") / g(yoy, "cost") * 100 : null, "percent").join("\n")}
+
+### Search Impression Share
+${curIS != null && prevIS != null ? `IS: ${prevIS}% → ${curIS}% (${pct(curIS, prevIS) != null ? (pct(curIS, prevIS)! > 0 ? "+" : "") + pct(curIS, prevIS) + "% m/m" : ""})` : "Geen IS data beschikbaar."}
+
+## Afgeronde werkzaamheden
+${doneItems.length > 0 ? doneItems.map((i) => `- [${i.owner}] ${i.task}`).join("\n") : "Geen afgeronde sprint items."}
+${doneTasks.length > 0 ? doneTasks.map((t) => `- [${t.priority}] ${t.title}: ${t.description}`).join("\n") : ""}
+
+## Openstaande taken / planning komende maand
+${openTasks.length > 0 ? openTasks.map((t) => `- [${t.priority}] ${t.title}: ${t.description}`).join("\n") : "Geen openstaande taken."}
+${openItems.length > 0 ? openItems.map((i) => `- [${i.owner}] ${i.task} (${i.status})`).join("\n") : ""}
+${hypotheses.length > 0 ? "\nHypotheses:\n" + hypotheses.map((h) => `- [${h.status}] ${h.hypothesis} → ${h.expected_result}`).join("\n") : ""}
+
+## Wijzigingen in Google Ads (laatste 60 dagen)
+${changeHistory.length > 0 ? changeHistory.slice(0, 15).map((c) => {
+      const date = new Date(c.change_datetime as string).toLocaleDateString("nl-NL", { day: "numeric", month: "short" });
+      return `- ${date}: ${c.change_type} op ${c.campaign_name}`;
+    }).join("\n") : "Geen wijzigingen."}
+
+${latestSopRes.data ? `\nContext laatste SOP (${latestSopRes.data.sop_type}):\n${(latestSopRes.data.output as string).slice(0, 1500)}` : ""}
+
+Schrijf nu het rapport. Retourneer ALLEEN valid JSON.`;
+
+    // ── Generate via LLM ─────────────────────────────────────────
+
+    const response = await callOpenRouter({
+      apiKey,
+      systemPrompt: buildReportPrompt(clientName),
+      userMessage,
+      maxTokens: 8192,
+      jsonMode: true,
+      label: "client-report-v2",
+    });
+
+    let llmData: {
+      metric_sections: Array<{ id: string; heading: string; body: string }>;
+      action_section: { heading: string; body: string };
+      planning_section: { heading: string; body: string };
+    };
+    try {
+      llmData = JSON.parse(response.output);
+    } catch {
+      const jsonMatch = response.output.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        llmData = JSON.parse(jsonMatch[0]);
+      } else {
+        return Response.json({ error: "Rapport generatie mislukt: geen valid JSON" }, { status: 500 });
+      }
+    }
+
+    // ── Merge LLM text with computed data ────────────────────────
+
+    const findLlmSection = (id: string) => llmData.metric_sections?.find((s) => s.id === id);
+
+    const impressiesLlm = findLlmSection("impressies");
+    const cpcLlm = findLlmSection("cpc");
+    const conversiesLlm = findLlmSection("conversies");
+    const omzetLlm = findLlmSection("omzet_roas");
+    const isLlm = findLlmSection("impression_share");
+
+    const metricSections: MetricSection[] = [
+      {
+        id: "impressies",
+        label: `Resultaten ${reportMonthShort} | Impressies`,
+        heading: impressiesLlm?.heading ?? "Impressies overzicht",
+        body: impressiesLlm?.body ?? "",
+        bullets: [
+          ...metricBullets("Impressies", g(cur, "impressions"), g(prev, "impressions"), yoy ? g(yoy, "impressions") : null, "number"),
+          ...metricBullets("Klikken", g(cur, "clicks"), g(prev, "clicks"), yoy ? g(yoy, "clicks") : null, "number"),
+          ...metricBullets("CTR", g(cur, "ctr") * 100, g(prev, "ctr") * 100, yoy ? g(yoy, "ctr") * 100 : null, "decimal"),
+        ],
+        chartData: buildChartData("impressions"),
+        chartData2: buildComputedChart((r) => Number(r.ctr ?? 0) * 100),
+        chartLabel: "Impressies",
+        chartLabel2: "CTR (%)",
+        chartType: "bar",
+        chartType2: "line",
+      },
+      {
+        id: "cpc",
+        label: `Resultaten ${reportMonthShort} | CPC`,
+        heading: cpcLlm?.heading ?? "CPC overzicht",
+        body: cpcLlm?.body ?? "",
+        bullets: metricBullets("CPC", g(cur, "avg_cpc"), g(prev, "avg_cpc"), yoy ? g(yoy, "avg_cpc") : null, "currency"),
+        chartData: buildChartData("avg_cpc"),
+        chartLabel: "CPC",
+        chartType: "line",
+      },
+      {
+        id: "conversies",
+        label: `Resultaten ${reportMonthShort} | Conversies`,
+        heading: conversiesLlm?.heading ?? "Conversies overzicht",
+        body: conversiesLlm?.body ?? "",
+        bullets: [
+          ...metricBullets("Conversies", g(cur, "conversions"), g(prev, "conversions"), yoy ? g(yoy, "conversions") : null, "number"),
+          ...metricBullets("Conversieratio", g(cur, "conversion_rate") * 100, g(prev, "conversion_rate") * 100, yoy ? g(yoy, "conversion_rate") * 100 : null, "decimal"),
+          ...metricBullets("Kosten per conversie", kpiCards[4].current, kpiCards[4].previous, yoy && g(yoy, "conversions") > 0 ? g(yoy, "cost") / g(yoy, "conversions") : null, "currency"),
+        ],
+        chartData: buildChartData("conversions"),
+        chartData2: buildComputedChart((r) => Number(r.conversion_rate ?? 0) * 100),
+        chartLabel: "Conversies",
+        chartLabel2: "Conversieratio (%)",
+        chartType: "bar",
+        chartType2: "line",
+      },
+      {
+        id: "omzet_roas",
+        label: `Resultaten ${reportMonthShort} | Omzet & ROAS`,
+        heading: omzetLlm?.heading ?? "Omzet & ROAS overzicht",
+        body: omzetLlm?.body ?? "",
+        bullets: [
+          ...metricBullets("Conversiewaarde", g(cur, "conversions_value"), g(prev, "conversions_value"), yoy ? g(yoy, "conversions_value") : null, "currency"),
+          ...metricBullets("Kosten", g(cur, "cost"), g(prev, "cost"), yoy ? g(yoy, "cost") : null, "currency"),
+          ...metricBullets("ROAS", kpiCards[3].current, kpiCards[3].previous, yoy && g(yoy, "cost") > 0 ? g(yoy, "conversions_value") / g(yoy, "cost") * 100 : null, "percent"),
+        ],
+        chartData: buildChartData("conversions_value"),
+        chartData2: buildComputedChart((r) => Number(r.cost ?? 0) > 0 ? Number(r.conversions_value ?? 0) / Number(r.cost ?? 1) * 100 : 0),
+        chartLabel: "Omzet",
+        chartLabel2: "ROAS (%)",
+        chartType: "bar",
+        chartType2: "line",
+      },
+    ];
+
+    // Add IS section only if data exists
+    if (isChartData.length > 0) {
+      metricSections.push({
+        id: "impression_share",
+        label: `Resultaten ${reportMonthShort} | Impression Share`,
+        heading: isLlm?.heading ?? "Search Impression Share",
+        body: isLlm?.body ?? "",
+        bullets: curIS != null && prevIS != null
+          ? [`Search Impression Share: ${prevIS}% → ${curIS}% (${pct(curIS, prevIS) != null ? (pct(curIS, prevIS)! > 0 ? "+" : "") + pct(curIS, prevIS) + "% m/m" : ""})`]
+          : [],
+        chartData: isChartData,
+        chartLabel: "Search Impression Share (%)",
+        chartType: "line",
+      });
+    }
+
+    // ── Build final report structure ─────────────────────────────
+
+    const reportData: ReportData = {
+      title: `Maandrapportage ${reportMonthLabel} ${lastMonthYear} — ${clientName}`,
+      reportMonth: reportMonthLabel,
+      reportYear: lastMonthYear,
+      kpiCards,
+      metricSections,
+      actionSection: llmData.action_section ?? { heading: "Acties komende maand", body: "" },
+      planningSection: llmData.planning_section ?? { heading: "Planning", body: "" },
+    };
+
+    // ── Save to Supabase ─────────────────────────────────────────
+
+    const reportDate = `${lastMonthYear}-${String(lastMonth).padStart(2, "0")}-01`;
+
+    const { data: row, error: insertErr } = await supabase
+      .from("client_reports")
+      .insert({
+        client_id: clientId,
+        report_date: reportDate,
+        report_month: lastMonth,
+        report_year: lastMonthYear,
+        title: reportData.title,
+        sections: reportData, // Store ENTIRE report structure as JSONB
+        model_used: response.model,
+        tokens_used: response.tokensUsed,
+        status: "draft",
+      })
+      .select("id")
+      .single();
+
+    if (insertErr) {
+      console.error("[client-reports] Insert failed:", insertErr.message);
+      return Response.json({ ...reportData, reportId: null, saved: false });
+    }
+
+    return Response.json({ ...reportData, reportId: row.id, saved: true });
+  } catch (err) {
+    console.error("[client-reports] Generation failed:", err);
+    return Response.json({ error: err instanceof Error ? err.message : "Rapport generatie mislukt" }, { status: 500 });
+  }
+}
+
+// ── GET: List reports ─────────────────────────────────────────────────────
+
+export async function GET(request: NextRequest) {
+  const supabase = getSupabase();
+  if (!supabase) return Response.json({ error: "Supabase niet geconfigureerd" }, { status: 500 });
+
+  const clientId = request.nextUrl.searchParams.get("client_id");
+  if (!clientId) return Response.json({ error: "client_id parameter vereist" }, { status: 400 });
+
+  const { data, error } = await supabase
+    .from("client_reports")
+    .select("id, report_date, report_month, report_year, title, status, created_at")
+    .eq("client_id", clientId)
+    .order("report_date", { ascending: false })
+    .limit(24);
+
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ reports: data ?? [] });
+}
+
+// ── PATCH: Update report ──────────────────────────────────────────────────
+
+export async function PATCH(request: NextRequest) {
+  const supabase = getSupabase();
+  if (!supabase) return Response.json({ error: "Supabase niet geconfigureerd" }, { status: 500 });
+
+  let reportId: string;
+  let sections: unknown;
+  let title: string | undefined;
+  let status: string | undefined;
+  try {
+    const body = await request.json();
+    reportId = body.report_id;
+    sections = body.sections;
+    title = body.title;
+    status = body.status;
+    if (!reportId) throw new Error("missing");
+  } catch {
+    return Response.json({ error: "Verwacht: { report_id }" }, { status: 400 });
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (sections) updates.sections = sections;
+  if (title) updates.title = title;
+  if (status) updates.status = status;
+
+  const { error } = await supabase.from("client_reports").update(updates).eq("id", reportId);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ ok: true });
+}
+
+
+════════════════════════════════════════════════════════════════
+FILE 3: app/api/client-reports/pdf/route.ts
+════════════════════════════════════════════════════════════════
+import { NextRequest } from "next/server";
+import { getSupabase } from "@/lib/analysis/helpers";
+import { renderReportPdf, type ReportPdfProps } from "@/lib/client-reports/pdf-renderer";
+
+/**
+ * GET /api/client-reports/pdf?report_id=xxx&client_name=yyy
+ *
+ * Generates PDF for a saved client report, saves to Rapportages folder.
+ */
+export async function GET(request: NextRequest) {
+  const supabase = getSupabase();
+  if (!supabase) return Response.json({ error: "Supabase niet geconfigureerd" }, { status: 500 });
+
+  const reportId = request.nextUrl.searchParams.get("report_id");
+  const clientName = request.nextUrl.searchParams.get("client_name") || "Onbekend";
+  if (!reportId) return Response.json({ error: "report_id parameter vereist" }, { status: 400 });
+
+  const { data: report, error } = await supabase
+    .from("client_reports")
+    .select("*")
+    .eq("id", reportId)
+    .single();
+
+  if (error || !report) return Response.json({ error: "Rapport niet gevonden" }, { status: 404 });
+
+  const clientId = report.client_id as string;
+  const reportMonth = report.report_month as number;
+  const reportYear = report.report_year as number;
+  const MONTH_NAMES = ["Januari", "Februari", "Maart", "April", "Mei", "Juni", "Juli", "Augustus", "September", "Oktober", "November", "December"];
+  const monthLabel = MONTH_NAMES[reportMonth - 1] ?? `Maand ${reportMonth}`;
+
+  try {
+    // Fetch logo URLs
+    let rmLogoUrl: string | undefined;
+    let clientLogoUrl: string | undefined;
+
+    // RM logo from public directory
+    const rmLogoPath = process.cwd() + "/public/images/ranking-masters-logo.png";
+    try {
+      const fs = await import("fs");
+      if (fs.existsSync(rmLogoPath)) {
+        const buf = fs.readFileSync(rmLogoPath);
+        rmLogoUrl = `data:image/png;base64,${buf.toString("base64")}`;
+      }
+    } catch { /* no logo file */ }
+
+    // Client logo from Supabase Storage
+    const { data: logoData } = await supabase.storage
+      .from("client-files")
+      .createSignedUrl(`${clientId}/logo.png`, 300);
+    if (logoData?.signedUrl) clientLogoUrl = logoData.signedUrl;
+
+    // The sections column contains the full ReportData structure
+    const rd = report.sections as Record<string, unknown>;
+
+    const pdfProps: ReportPdfProps = {
+      clientName,
+      title: (rd.title as string) ?? report.title as string,
+      reportMonth: monthLabel,
+      reportYear,
+      generatedAt: report.created_at as string,
+      kpiCards: (rd.kpiCards as ReportPdfProps["kpiCards"]) ?? [],
+      metricSections: (rd.metricSections as ReportPdfProps["metricSections"]) ?? [],
+      actionSection: (rd.actionSection as ReportPdfProps["actionSection"]) ?? { heading: "", body: "" },
+      planningSection: (rd.planningSection as ReportPdfProps["planningSection"]) ?? { heading: "", body: "" },
+      rmLogoUrl,
+      clientLogoUrl,
+    };
+
+    const pdfBuffer = await renderReportPdf(pdfProps);
+
+    // Save to Rapportages folder
+    const safeName = clientName.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-").toLowerCase();
+    const filename = `${safeName}-rapport-${reportYear}-${String(reportMonth).padStart(2, "0")}.pdf`;
+    const storagePath = `${clientId}/Rapportages/${Date.now()}-${filename}`;
+
+    await supabase.storage.from("client-files").upload(storagePath, pdfBuffer, {
+      contentType: "application/pdf",
+      upsert: true,
+    });
+
+    // Ensure folder exists
+    const { data: existingFolder } = await supabase
+      .from("client_folders")
+      .select("id")
+      .eq("client_id", clientId)
+      .eq("name", "Rapportages")
+      .maybeSingle();
+
+    if (!existingFolder) {
+      await supabase.from("client_folders").insert({ client_id: clientId, name: "Rapportages" });
+    }
+
+    // Insert file reference
+    await supabase.from("client_files").insert({
+      client_id: clientId,
+      folder: "Rapportages",
+      file_name: filename,
+      file_size: pdfBuffer.length,
+      content_type: "application/pdf",
+      storage_path: storagePath,
+    });
+
+    return new Response(new Uint8Array(pdfBuffer), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+      },
+    });
+  } catch (err) {
+    console.error("[client-reports/pdf] Failed:", err);
+    return Response.json({ error: err instanceof Error ? err.message : "PDF mislukt" }, { status: 500 });
+  }
+}
+
+
+════════════════════════════════════════════════════════════════
+FILE 4: components/dashboard/client-reporting.tsx
+════════════════════════════════════════════════════════════════
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import {
+  FileText, Loader2, Pencil, Save, X, Download, Plus, Check, Clock,
+  Send, ChevronDown, ChevronUp,
+} from "lucide-react";
+import {
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+} from "recharts";
+import { getAllClients } from "@/lib/clients";
+
+// ── Types (matching API output) ────────────────────────────────────────────
+
+interface MetricPoint { month: string; value: number }
+interface KpiCard { label: string; current: number; previous: number; changePct: number; yoyChangePct: number | null; format: "number" | "currency" | "percent" | "decimal" }
+interface MetricSection { id: string; label: string; heading: string; body: string; bullets: string[]; chartData: MetricPoint[]; chartData2?: MetricPoint[]; chartLabel: string; chartLabel2?: string; chartType: "bar" | "line"; chartType2?: "bar" | "line" }
+interface ReportData {
+  title: string; reportMonth: string; reportYear: number;
+  kpiCards: KpiCard[]; metricSections: MetricSection[];
+  actionSection: { heading: string; body: string };
+  planningSection: { heading: string; body: string };
+  reportId?: string | null;
+}
+interface ReportSummary { id: string; report_date: string; report_month: number; report_year: number; title: string; status: string; created_at: string }
+
+const MONTH_NAMES = ["Januari", "Februari", "Maart", "April", "Mei", "Juni", "Juli", "Augustus", "September", "Oktober", "November", "December"];
+const STATUS_STYLE: Record<string, { label: string; color: string; bg: string }> = {
+  draft: { label: "Concept", color: "text-amber-600", bg: "bg-amber-50 border-amber-200" },
+  final: { label: "Definitief", color: "text-green-600", bg: "bg-green-50 border-green-200" },
+  sent: { label: "Verstuurd", color: "text-blue-600", bg: "bg-blue-50 border-blue-200" },
+};
+
+// ── Formatters ─────────────────────────────────────────────────────────────
+
+function fmtValue(v: number, format: string): string {
+  if (format === "currency") return `€${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(v)}`;
+  if (format === "percent") return `${v.toFixed(1)}%`;
+  if (format === "decimal") return v.toFixed(2);
+  return new Intl.NumberFormat("nl-NL").format(Math.round(v));
+}
+
+// ── Mini chart component ───────────────────────────────────────────────────
+
+function MiniChart({ data, type, label, color = "#E87722", height = 180 }: { data: MetricPoint[]; type: "bar" | "line"; label: string; color?: string; height?: number }) {
+  if (data.length === 0) return null;
+  return (
+    <div>
+      <p className="text-[10px] text-muted-foreground mb-1">{label}</p>
+      <ResponsiveContainer width="100%" height={height}>
+        {type === "bar" ? (
+          <BarChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis dataKey="month" tick={{ fontSize: 9 }} />
+            <YAxis tick={{ fontSize: 9 }} width={45} />
+            <Tooltip contentStyle={{ fontSize: 11 }} />
+            <Bar dataKey="value" fill={color} radius={[2, 2, 0, 0]} name={label} />
+          </BarChart>
+        ) : (
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis dataKey="month" tick={{ fontSize: 9 }} />
+            <YAxis tick={{ fontSize: 9 }} width={45} />
+            <Tooltip contentStyle={{ fontSize: 11 }} />
+            <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={{ r: 3 }} name={label} />
+          </LineChart>
+        )}
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ── Component ──────────────────────────────────────────────────────────────
+
+export function ClientReporting({ clientId }: { clientId: string }) {
+  const clientName = getAllClients().find((c) => c.id === clientId)?.name ?? clientId;
+
+  const [reports, setReports] = useState<ReportSummary[]>([]);
+  const [report, setReport] = useState<ReportData | null>(null);
+  const [reportId, setReportId] = useState<string | null>(null);
+  const [reportStatus, setReportStatus] = useState("draft");
+  const [generating, setGenerating] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editBuf, setEditBuf] = useState<{ heading: string; body: string } | null>(null);
+
+  // ── Fetch reports list ─────────────────────────────────────────
+
+  const fetchReports = useCallback(async () => {
+    const res = await fetch(`/api/client-reports?client_id=${clientId}`);
+    if (res.ok) {
+      const data = await res.json();
+      return (data.reports ?? []) as ReportSummary[];
+    }
+    return [];
+  }, [clientId]);
+
+  async function loadReport(id: string) {
+    setLoading(true);
+    try {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (!url || !key) return;
+      const res = await fetch(
+        `${url}/rest/v1/client_reports?id=eq.${id}&select=id,title,sections,status,report_month,report_year,created_at`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.length > 0) {
+          const row = data[0];
+          // sections column contains the full ReportData
+          const rd = row.sections as ReportData;
+          setReport(rd);
+          setReportId(row.id);
+          setReportStatus(row.status);
+          setEditingId(null);
+          setEditBuf(null);
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    async function init() {
+      const list = await fetchReports();
+      setReports(list);
+      if (list.length > 0 && !report) {
+        await loadReport(list[0].id);
+      }
+    }
+    init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  // ── Generate ───────────────────────────────────────────────────
+
+  async function generateReport() {
+    setGenerating(true);
+    try {
+      const res = await fetch("/api/client-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientId, client_name: clientName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Mislukt");
+      setReport(data);
+      setReportId(data.reportId);
+      setReportStatus("draft");
+      const list = await fetchReports();
+      setReports(list);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Mislukt");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  // ── Edit + save ────────────────────────────────────────────────
+
+  function startEdit(sectionId: string, heading: string, body: string) {
+    setEditBuf({ heading, body });
+    setEditingId(sectionId);
+  }
+
+  async function saveEdit() {
+    if (!report || !editingId || !editBuf || !reportId) return;
+    setSaving(true);
+    try {
+      // Update in local state
+      const updated = { ...report };
+      const ms = updated.metricSections.find((s) => s.id === editingId);
+      if (ms) { ms.heading = editBuf.heading; ms.body = editBuf.body; }
+      if (editingId === "acties") { updated.actionSection = { heading: editBuf.heading, body: editBuf.body }; }
+      if (editingId === "planning") { updated.planningSection = { heading: editBuf.heading, body: editBuf.body }; }
+
+      await fetch("/api/client-reports", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report_id: reportId, sections: updated }),
+      });
+      setReport(updated);
+      setEditingId(null);
+      setEditBuf(null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateStatus(newStatus: string) {
+    if (!reportId) return;
+    await fetch("/api/client-reports", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ report_id: reportId, status: newStatus }) });
+    setReportStatus(newStatus);
+    const list = await fetchReports();
+    setReports(list);
+  }
+
+  async function downloadPdf() {
+    if (!reportId) return;
+    setPdfLoading(true);
+    try {
+      const res = await fetch(`/api/client-reports/pdf?report_id=${reportId}&client_name=${encodeURIComponent(clientName)}`);
+      if (!res.ok) throw new Error("PDF mislukt");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url;
+      a.download = res.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] ?? "rapport.pdf";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) { alert(err instanceof Error ? err.message : "PDF mislukt"); }
+    finally { setPdfLoading(false); }
+  }
+
+  function copyText() {
+    if (!report) return;
+    const parts = [report.title, ""];
+    for (const s of report.metricSections) {
+      parts.push(s.heading, ...s.bullets, "", s.body, "", "---", "");
+    }
+    parts.push(report.actionSection.heading, "", report.actionSection.body, "", "---", "");
+    parts.push(report.planningSection.heading, "", report.planningSection.body);
+    navigator.clipboard.writeText(parts.join("\n"));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  // ── Render ─────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-rm-blue/10 flex items-center justify-center shrink-0">
+            <FileText className="w-4.5 h-4.5 text-rm-blue" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-gray-900 leading-tight">Rapportage</h2>
+            <p className="text-xs text-muted-foreground">Maandrapportage — per metric, met grafieken en bewerkbare tekst</p>
+          </div>
+        </div>
+        <button onClick={generateReport} disabled={generating} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-rm-blue text-white text-sm font-medium hover:bg-rm-blue/90 transition-colors disabled:opacity-50">
+          {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+          {generating ? "Genereren..." : "Nieuw rapport"}
+        </button>
+      </div>
+
+      {/* Report list (when no active report) */}
+      {!report && !generating && !loading && reports.length > 0 && (
+        <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
+          <div className="px-5 py-3 border-b border-border"><h3 className="text-sm font-semibold text-rm-gray">Eerdere rapportages</h3></div>
+          <div className="divide-y divide-border">
+            {reports.map((r) => (
+              <button key={r.id} onClick={() => loadReport(r.id)} className="w-full flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition-colors text-left">
+                <div>
+                  <p className="text-sm font-medium text-rm-gray">{r.title}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{MONTH_NAMES[r.report_month - 1]} {r.report_year}</p>
+                </div>
+                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[r.status]?.bg ?? ""} ${STATUS_STYLE[r.status]?.color ?? ""}`}>{STATUS_STYLE[r.status]?.label ?? r.status}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Loading / Generating */}
+      {loading && <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-rm-blue" /></div>}
+      {generating && (
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-rm-blue" />
+          <p className="text-sm text-muted-foreground">Rapport wordt gegenereerd...</p>
+          <p className="text-[10px] text-muted-foreground">Data ophalen, metrics berekenen, tekst genereren — ca. 30-60 sec</p>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!report && !generating && !loading && reports.length === 0 && (
+        <div className="bg-white rounded-xl border border-border shadow-sm p-12 text-center">
+          <FileText className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
+          <h3 className="text-sm font-semibold text-rm-gray mb-1">Nog geen rapportages</h3>
+          <p className="text-xs text-muted-foreground mb-4">Genereer een rapport met grafieken, KPI&apos;s en analyse per metric.</p>
+          <button onClick={generateReport} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-rm-blue text-white text-sm font-medium hover:bg-rm-blue/90">
+            <Plus className="w-4 h-4" /> Eerste rapport genereren
+          </button>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════ */}
+      {/* ACTIVE REPORT */}
+      {/* ═══════════════════════════════════════════════════════════ */}
+      {report && !loading && !generating && (
+        <div className="space-y-5">
+
+          {/* Actions bar */}
+          <div className="bg-white rounded-xl border border-border shadow-sm px-5 py-3 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-rm-gray">{report.title}</h2>
+              <p className="text-[10px] text-muted-foreground">{report.reportMonth} {report.reportYear}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[reportStatus]?.bg ?? ""} ${STATUS_STYLE[reportStatus]?.color ?? ""}`}>{STATUS_STYLE[reportStatus]?.label ?? reportStatus}</span>
+              {reportStatus === "draft" && <button onClick={() => updateStatus("final")} className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border border-green-200 bg-green-50 text-green-600 hover:bg-green-100"><Check className="w-3 h-3" /> Definitief</button>}
+              {reportStatus === "final" && <button onClick={() => updateStatus("sent")} className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100"><Send className="w-3 h-3" /> Verstuurd</button>}
+              {reportId && <button onClick={downloadPdf} disabled={pdfLoading} className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border border-rm-orange/30 bg-orange-50 text-rm-orange hover:bg-orange-100 disabled:opacity-50">{pdfLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />} PDF</button>}
+              <button onClick={copyText} className="flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md border border-border text-muted-foreground hover:bg-gray-50">{copied ? <Check className="w-3 h-3 text-green-500" /> : <Download className="w-3 h-3" />} {copied ? "Gekopieerd!" : "Tekst"}</button>
+              <button onClick={() => { setReport(null); setReportId(null); fetchReports().then(setReports); }} className="text-[10px] font-medium px-2 py-1 rounded-md border border-border text-muted-foreground hover:bg-gray-50">Terug</button>
+            </div>
+          </div>
+
+          {/* ── KPI Summary Cards ── */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            {report.kpiCards.map((kpi) => {
+              const isPositive = kpi.changePct > 0;
+              // For CPA: lower is better, so invert the color
+              const invertColor = kpi.label === "CPA" || kpi.label === "Kosten";
+              const changeColor = invertColor
+                ? (isPositive ? "text-red-600" : "text-green-600")
+                : (isPositive ? "text-green-600" : "text-red-600");
+
+              return (
+                <div key={kpi.label} className="bg-white rounded-xl border border-border shadow-sm p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-medium text-muted-foreground">{kpi.label}</span>
+                    <span className={`text-[10px] font-bold ${changeColor}`}>
+                      {kpi.changePct > 0 ? "+" : ""}{kpi.changePct}%
+                    </span>
+                  </div>
+                  <p className="text-lg font-bold text-rm-gray">{fmtValue(kpi.current, kpi.format)}</p>
+                  <p className="text-[10px] text-muted-foreground">({fmtValue(kpi.previous, kpi.format)})</p>
+                  {kpi.yoyChangePct != null && (
+                    <p className="text-[9px] text-muted-foreground mt-1">YoY: {kpi.yoyChangePct > 0 ? "+" : ""}{kpi.yoyChangePct}%</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── Per-metric sections ── */}
+          {report.metricSections.map((section) => {
+            const isEditing = editingId === section.id;
+
+            return (
+              <div key={section.id} className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
+                {/* Section label bar */}
+                <div className="px-5 py-2 border-b border-border flex items-center justify-between bg-gray-50/50">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{section.label}</span>
+                  {!isEditing && (
+                    <button onClick={() => startEdit(section.id, section.heading, section.body)} className="p-1 rounded-md hover:bg-gray-100 text-muted-foreground"><Pencil className="w-3.5 h-3.5" /></button>
+                  )}
+                  {isEditing && (
+                    <div className="flex items-center gap-1">
+                      <button onClick={saveEdit} disabled={saving} className="p-1 rounded-md bg-rm-blue text-white hover:bg-rm-blue/90">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}</button>
+                      <button onClick={() => { setEditingId(null); setEditBuf(null); }} className="p-1 rounded-md border border-border hover:bg-gray-50"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="px-5 py-4">
+                  {/* Layout: text left, charts right */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Left: headline + bullets + body */}
+                    <div>
+                      {isEditing && editBuf ? (
+                        <>
+                          <input type="text" value={editBuf.heading} onChange={(e) => setEditBuf({ ...editBuf, heading: e.target.value })} className="w-full text-xl font-bold text-rm-gray border border-border rounded-md px-3 py-2 mb-3 focus:outline-none focus:ring-1 focus:ring-rm-blue" />
+                          <div className="mb-3">
+                            {section.bullets.map((b, i) => <p key={i} className="text-sm text-rm-gray font-medium">• {b}</p>)}
+                          </div>
+                          <textarea value={editBuf.body} onChange={(e) => setEditBuf({ ...editBuf, body: e.target.value })} rows={6} className="w-full text-sm text-rm-gray border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-rm-blue resize-y leading-relaxed" />
+                        </>
+                      ) : (
+                        <>
+                          <h3 className="text-xl font-bold text-rm-gray leading-snug mb-3">{section.heading}<span className="text-rm-orange">.</span></h3>
+                          <div className="space-y-0.5 mb-3">
+                            {section.bullets.map((b, i) => <p key={i} className="text-sm text-rm-gray"><span className="font-semibold">•</span> {b}</p>)}
+                          </div>
+                          <p className="text-sm text-rm-gray leading-relaxed">{section.body}</p>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Right: charts */}
+                    <div className="space-y-4">
+                      <MiniChart data={section.chartData} type={section.chartType} label={section.chartLabel} />
+                      {section.chartData2 && section.chartLabel2 && (
+                        <MiniChart data={section.chartData2} type={section.chartType2 ?? "line"} label={section.chartLabel2} color="#1e40af" />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* ── Actions section ── */}
+          <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
+            <div className="px-5 py-2 border-b border-border flex items-center justify-between bg-gray-50/50">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Acties komende maand</span>
+              {editingId !== "acties" && <button onClick={() => startEdit("acties", report.actionSection.heading, report.actionSection.body)} className="p-1 rounded-md hover:bg-gray-100 text-muted-foreground"><Pencil className="w-3.5 h-3.5" /></button>}
+              {editingId === "acties" && (
+                <div className="flex items-center gap-1">
+                  <button onClick={saveEdit} disabled={saving} className="p-1 rounded-md bg-rm-blue text-white">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}</button>
+                  <button onClick={() => { setEditingId(null); setEditBuf(null); }} className="p-1 rounded-md border border-border hover:bg-gray-50"><X className="w-3.5 h-3.5" /></button>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-4">
+              {editingId === "acties" && editBuf ? (
+                <>
+                  <input type="text" value={editBuf.heading} onChange={(e) => setEditBuf({ ...editBuf, heading: e.target.value })} className="w-full text-xl font-bold text-rm-gray border border-border rounded-md px-3 py-2 mb-3 focus:outline-none focus:ring-1 focus:ring-rm-blue" />
+                  <textarea value={editBuf.body} onChange={(e) => setEditBuf({ ...editBuf, body: e.target.value })} rows={8} className="w-full text-sm text-rm-gray border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-rm-blue resize-y leading-relaxed" />
+                </>
+              ) : (
+                <>
+                  <h3 className="text-xl font-bold text-rm-gray leading-snug mb-3">{report.actionSection.heading}<span className="text-rm-orange">.</span></h3>
+                  <div className="text-sm text-rm-gray leading-relaxed whitespace-pre-line">{report.actionSection.body}</div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* ── Planning section ── */}
+          <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
+            <div className="px-5 py-2 border-b border-border flex items-center justify-between bg-gray-50/50">
+              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Planning & Vooruitblik</span>
+              {editingId !== "planning" && <button onClick={() => startEdit("planning", report.planningSection.heading, report.planningSection.body)} className="p-1 rounded-md hover:bg-gray-100 text-muted-foreground"><Pencil className="w-3.5 h-3.5" /></button>}
+              {editingId === "planning" && (
+                <div className="flex items-center gap-1">
+                  <button onClick={saveEdit} disabled={saving} className="p-1 rounded-md bg-rm-blue text-white">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}</button>
+                  <button onClick={() => { setEditingId(null); setEditBuf(null); }} className="p-1 rounded-md border border-border hover:bg-gray-50"><X className="w-3.5 h-3.5" /></button>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-4">
+              {editingId === "planning" && editBuf ? (
+                <>
+                  <input type="text" value={editBuf.heading} onChange={(e) => setEditBuf({ ...editBuf, heading: e.target.value })} className="w-full text-xl font-bold text-rm-gray border border-border rounded-md px-3 py-2 mb-3 focus:outline-none focus:ring-1 focus:ring-rm-blue" />
+                  <textarea value={editBuf.body} onChange={(e) => setEditBuf({ ...editBuf, body: e.target.value })} rows={8} className="w-full text-sm text-rm-gray border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-rm-blue resize-y leading-relaxed" />
+                </>
+              ) : (
+                <>
+                  <h3 className="text-xl font-bold text-rm-gray leading-snug mb-3">{report.planningSection.heading}<span className="text-rm-orange">.</span></h3>
+                  <div className="text-sm text-rm-gray leading-relaxed whitespace-pre-line">{report.planningSection.body}</div>
+                </>
+              )}
+            </div>
+          </div>
+
+        </div>
+      )}
+    </div>
+  );
+}
