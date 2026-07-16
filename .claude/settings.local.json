@@ -50,7 +50,9 @@
       "Bash(ls -la /Users/juulr/Desktop/dashboard/*.json)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Results: {len\\(d.get\\(\\\\\"results\\\\\",[]\\)\\)}, Date: {d.get\\(\\\\\"analysisDate\\\\\",\\\\\"none\\\\\"\\)}'\\)\")",
       "Bash(ls:*)",
-      "Bash(sips -Z 1200 -s format jpeg /Users/juulr/Desktop/dashboard/public/images/cover-photo.png --out /Users/juulr/Desktop/dashboard/public/images/cover-photo.jpg)"
+      "Bash(sips -Z 1200 -s format jpeg /Users/juulr/Desktop/dashboard/public/images/cover-photo.png --out /Users/juulr/Desktop/dashboard/public/images/cover-photo.jpg)",
+      "mcp__Claude_Code_Remote__delete_trigger",
+      "mcp__Claude_Code_Remote__unsubscribe_pr_activity"
     ]
   }
 }
