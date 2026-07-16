@@ -35,13 +35,25 @@ import {
   getAudiencePerformanceByMonth,
   getAdSchedulePerformance,
   getCheckoutFunnelByMonth,
+  getRsaAssetMetricsByMonth,
+  getAdMeta,
+  getAdGroupNegatives,
+  getCampaignNegatives,
+  getSharedSetNegatives,
   getPmaxAssetPerformanceByMonth,
   getPmaxNetworkBreakdownByMonth,
   getPmaxPlacementsByMonth,
   getPmaxSearchCategoriesByMonth,
   type GoogleAdsCredentials,
 } from "../api/google-ads";
+import { rsaAssetToDbRow, adMetaToDbRow } from "../api/google-ads-rsa-transform";
+// De zoekterm-query splitst rijen per match-type (segments.search_term_match_type); de
+// dedup verderop kent dat segment niet en zou een van de rijen weggooien MET zijn metrics.
+// Eerst optellen, dan pas dedupliceren.
+import { aggregateSearchTermsByMonth } from "../api/google-ads-search-term-aggregate";
+import { negativesToDbRows } from "../api/google-ads-negatives-transform";
 import { syncMerchantProductSnapshots } from "../api/merchant-products";
+import { logger } from "@/lib/logger";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -135,7 +147,7 @@ async function upsertBatch(
     const chunk = rows.slice(i, i + CHUNK);
     const { error } = await supabase.from(table).upsert(chunk, { onConflict: conflictColumns, ignoreDuplicates: false });
     if (error) {
-      console.error(`[sync] ${table} chunk error:`, error.message);
+      logger.error(`[sync] ${table} chunk error:`, error.message);
     } else {
       written += chunk.length;
     }
@@ -156,7 +168,7 @@ async function replaceBatch(
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
     const { error } = await supabase.from(table).insert(chunk);
-    if (error) console.error(`[sync] ${table} chunk error:`, error.message);
+    if (error) logger.error(`[sync] ${table} chunk error:`, error.message);
     else written += chunk.length;
   }
   return written;
@@ -232,6 +244,11 @@ export async function syncClient(opts: SyncOptions): Promise<SyncResult> {
   let pmaxNetworkRaw: Awaited<ReturnType<typeof getPmaxNetworkBreakdownByMonth>> = [];
   let pmaxPlacementsRaw: Awaited<ReturnType<typeof getPmaxPlacementsByMonth>> = [];
   let pmaxSearchCatsRaw: Awaited<ReturnType<typeof getPmaxSearchCategoriesByMonth>> = [];
+  let rsaAssetsRaw: Awaited<ReturnType<typeof getRsaAssetMetricsByMonth>> = [];
+  let adMetaRaw: Awaited<ReturnType<typeof getAdMeta>> = [];
+  let adGroupNegRaw: Awaited<ReturnType<typeof getAdGroupNegatives>> = [];
+  let campaignNegRaw: Awaited<ReturnType<typeof getCampaignNegatives>> = [];
+  let sharedNegRaw: Awaited<ReturnType<typeof getSharedSetNegatives>> = [];
 
   try {
     [
@@ -242,6 +259,8 @@ export async function syncClient(opts: SyncOptions): Promise<SyncResult> {
       audienceRaw, scheduleRaw,
       checkoutRaw,
       pmaxAssetsRaw, pmaxNetworkRaw, pmaxPlacementsRaw, pmaxSearchCatsRaw,
+      rsaAssetsRaw, adMetaRaw,
+      adGroupNegRaw, campaignNegRaw, sharedNegRaw,
     ] = await Promise.all([
       getAccountMetricsByMonth(credentials, customerId, startDate, endDate, convActionIds),
       getAccountMetricsByWeek(credentials, customerId, startDate, endDate),
@@ -267,6 +286,15 @@ export async function syncClient(opts: SyncOptions): Promise<SyncResult> {
       getPmaxNetworkBreakdownByMonth(credentials, customerId, startDate, endDate),
       getPmaxPlacementsByMonth(credentials, customerId, startDate, endDate),
       getPmaxSearchCategoriesByMonth(credentials, customerId, startDate, endDate),
+      // RSA-assets plus ad-meta (migratie 020, het RSA/W1-duo)
+      getRsaAssetMetricsByMonth(credentials, customerId, startDate, endDate),
+      getAdMeta(credentials, customerId),
+      // Negatives (migratie 022, categorie G). Drie niveaus, want een checker die er een
+      // mist geeft valse geruststelling. Elke fetch heeft zijn eigen catch die [] geeft,
+      // dus een veld dat niet bestaat maakt hooguit deze dataset leeg.
+      getAdGroupNegatives(credentials, customerId),
+      getCampaignNegatives(credentials, customerId),
+      getSharedSetNegatives(credentials, customerId),
     ]);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -332,7 +360,7 @@ export async function syncClient(opts: SyncOptions): Promise<SyncResult> {
       agRaw.map((ag) => ({ client_id: clientId, campaign_name: ag.campaignName, ad_group_id: ag.adGroupId, ad_group_name: ag.adGroupName, month: ag.date, impressions: ag.impressions, clicks: ag.clicks, cost: ag.cost, conversions: ag.conversions, conversions_value: ag.conversionsValue, cpa: ag.cpa, roas: ag.roas })),
       "client_id,ad_group_id,month")),
     syncDataset("ads_search_terms_wasteful", () => replaceBatch(supabase, "ads_search_terms_wasteful",
-      dedup(stRaw.map((st) => ({ client_id: clientId, week_start: st.date, search_term: st.searchTerm, campaign_name: st.campaignName, ad_group_name: st.adGroupName, impressions: st.impressions, clicks: st.clicks, cost: st.cost, match_type: st.matchType })), ["client_id", "week_start", "search_term"]),
+      dedup(stRaw.map((st) => ({ client_id: clientId, week_start: st.date, search_term: st.searchTerm, campaign_name: st.campaignName, ad_group_name: st.adGroupName, impressions: st.impressions, clicks: st.clicks, cost: st.cost, term_status: st.status })), ["client_id", "week_start", "search_term"]),
       clientId)),
     syncDataset("ads_change_history", () => replaceBatch(supabase, "ads_change_history",
       chRaw.map((ch) => ({ client_id: clientId, change_datetime: ch.changeDateTime, resource_type: ch.resourceType, change_resource_name: ch.changeResourceName, campaign_name: ch.campaignName, change_type: ch.changeType, old_value: ch.oldValue, new_value: ch.newValue, user_email: ch.userEmail })),
@@ -348,7 +376,7 @@ export async function syncClient(opts: SyncOptions): Promise<SyncResult> {
       dedup(kwRaw.map((k) => ({ client_id: clientId, month: k.date, campaign_id: k.campaignId, campaign_name: k.campaignName, ad_group_id: k.adGroupId, ad_group_name: k.adGroupName, keyword_id: k.keywordId, keyword_text: k.keywordText, match_type: k.matchType, impressions: k.impressions, clicks: k.clicks, cost: k.cost, conversions: k.conversions, conversions_value: k.conversionsValue, ctr: k.ctr, avg_cpc: k.avgCpc, conversion_rate: k.conversionRate, cost_per_conversion: k.costPerConversion, quality_score: k.qualityScore, synced_at: now })), ["client_id", "keyword_id", "month"]),
       "client_id,keyword_id,month")),
     syncDataset("ads_search_terms_monthly", () => upsertBatch(supabase, "ads_search_terms_monthly",
-      dedup(stFullRaw.map((st) => ({ client_id: clientId, month: st.date, campaign_id: st.campaignId, campaign_name: st.campaignName, ad_group_id: st.adGroupId, ad_group_name: st.adGroupName, search_term: st.searchTerm, match_type: st.matchType, impressions: st.impressions, clicks: st.clicks, cost: st.cost, conversions: st.conversions, conversions_value: st.conversionsValue, ctr: st.clicks > 0 && st.impressions > 0 ? st.clicks / st.impressions : 0, conversion_rate: st.clicks > 0 ? st.conversions / st.clicks : 0, synced_at: now })), ["client_id", "search_term", "campaign_name", "ad_group_name", "month"]),
+      dedup(aggregateSearchTermsByMonth(stFullRaw).map((st) => ({ client_id: clientId, month: st.date, campaign_id: st.campaignId, campaign_name: st.campaignName, ad_group_id: st.adGroupId, ad_group_name: st.adGroupName, search_term: st.searchTerm, match_type: st.matchType, impressions: st.impressions, clicks: st.clicks, cost: st.cost, conversions: st.conversions, conversions_value: st.conversionsValue, ctr: st.clicks > 0 && st.impressions > 0 ? st.clicks / st.impressions : 0, conversion_rate: st.clicks > 0 ? st.conversions / st.clicks : 0, synced_at: now })), ["client_id", "search_term", "campaign_name", "ad_group_name", "month"]),
       "client_id,search_term,campaign_name,ad_group_name,month")),
     syncDataset("ads_device_performance_monthly", () => replaceBatch(supabase, "ads_device_performance_monthly",
       deviceRaw.map((d) => ({ client_id: clientId, month: d.date, device: d.device, level: d.campaignId ? "campaign" : "account", campaign_id: d.campaignId, campaign_name: d.campaignName, impressions: d.impressions, clicks: d.clicks, cost: d.cost, conversions: d.conversions, conversions_value: d.conversionsValue, ctr: d.impressions > 0 ? d.clicks / d.impressions : 0, avg_cpc: d.clicks > 0 ? d.cost / d.clicks : 0, conversion_rate: d.clicks > 0 ? d.conversions / d.clicks : 0, cost_per_conversion: d.conversions > 0 ? d.cost / d.conversions : 0, synced_at: now })),
@@ -650,6 +678,15 @@ export async function syncClient(opts: SyncOptions): Promise<SyncResult> {
       countryYoyRows, clientId)),
     syncDataset("ads_country_impression_share", () => replaceBatch(supabase, "ads_country_impression_share",
       countryIsRows, clientId)),
+    syncDataset("google_ads_rsa_assets", () => upsertBatch(supabase, "google_ads_rsa_assets",
+      rsaAssetsRaw.map((r) => rsaAssetToDbRow(r, clientId)),
+      "client_id,month,ad_id,asset_id")),
+    syncDataset("ads_negative_keywords", () => replaceBatch(supabase, "ads_negative_keywords",
+      negativesToDbRows([...adGroupNegRaw, ...campaignNegRaw, ...sharedNegRaw], clientId, now) as unknown as Record<string, unknown>[],
+      clientId)),
+    syncDataset("google_ads_ad_meta", () => upsertBatch(supabase, "google_ads_ad_meta",
+      adMetaRaw.map((r) => adMetaToDbRow(r, clientId)),
+      "client_id,ad_id")),
   ]);
 
   // ── Update dimension availability ──

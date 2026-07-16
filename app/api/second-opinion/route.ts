@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { getSupabase } from "@/lib/analysis/helpers";
 import { runSecondOpinionAudit } from "@/lib/second-opinion/evaluator";
 import { renderSecondOpinionPdf } from "@/lib/second-opinion/pdf-renderer";
+import { saveAuditFindingsAsHypotheses } from "@/lib/second-opinion/findings-to-hypotheses";
 import type { AuditMode } from "@/lib/second-opinion/template";
 import { calculateFinalSummaries, type AuditRowResult, type AuditScore } from "@/lib/second-opinion/types";
 import {
@@ -10,6 +11,7 @@ import {
   markProgressFailed,
   updateProgressPhase,
 } from "@/lib/progress/server";
+import { logger } from "@/lib/logger";
 
 /**
  * POST /api/second-opinion — trigger a second opinion audit.
@@ -77,6 +79,9 @@ export async function POST(request: NextRequest) {
       await updateProgressPhase(supabase, { jobId, phaseKey, message });
     });
 
+    // 2b. Schrijf de Onvoldoende-bevindingen als pending voorstellen naar de goedkeuringswachtrij.
+    await saveAuditFindingsAsHypotheses(supabase, result.rows, { clientId, analysisId: runId });
+
     // 3. Ensure "Second Opinion" folder exists in client_folders
     const { data: existingFolder } = await supabase
       .from("client_folders")
@@ -132,7 +137,7 @@ export async function POST(request: NextRequest) {
       pdfStoragePath = storagePath;
       fileId = fileRow?.id ?? null;
     } catch (pdfErr) {
-      console.error("[second-opinion] PDF generatie mislukt:", pdfErr instanceof Error ? pdfErr.message : pdfErr);
+      logger.error("[second-opinion] PDF generatie mislukt:", pdfErr instanceof Error ? pdfErr.message : pdfErr);
     }
 
     // 5. Update run with results + PDF reference

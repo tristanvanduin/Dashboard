@@ -22,7 +22,10 @@ import {
   type Task,
 } from "../schema/analysis-schema";
 import { applyActionGating } from "./action-gating";
+import { saveProposalsReplacingPending, type SprintHypothesisRow } from "@/lib/second-opinion/findings-to-hypotheses";
+import { extractGroundedNumbers, gateItemFields } from "./weekly-number-gate";
 import type { DataReliabilityAssessment } from "./data-reliability";
+import { logger } from "@/lib/logger";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,7 +108,7 @@ ${analysisOutput}`;
   const findingsResult = parseFindings(findingsStep.output);
   const findings: Finding[] = findingsResult.success ? findingsResult.data : [];
   if (!findingsResult.success) {
-    console.error(`[${sopType}] Findings parse failed:`, findingsResult.error);
+    logger.error(`[${sopType}] Findings parse failed:`, findingsResult.error);
   }
 
   // ── Step B: Extract recommendations + tasks (JSON mode) ──────────
@@ -127,14 +130,35 @@ ${analysisOutput}`,
 
   const recsResult = parseRecommendations(recsStep.output);
   let recs: Recommendation[] = recsResult.success ? recsResult.data.recommendations : [];
-  const tasks: Task[] = recsResult.success ? recsResult.data.tasks : [];
+  let tasks: Task[] = recsResult.success ? recsResult.data.tasks : [];
   if (!recsResult.success) {
-    console.error(`[${sopType}] Recommendations parse failed:`, recsResult.error);
+    logger.error(`[${sopType}] Recommendations parse failed:`, recsResult.error);
   }
 
   // ── Apply deterministic action gating ────────────────────────────
 
   recs = applyActionGating(findings, recs);
+
+  // W2.5 (W2): number-gate voor de korte cadans. Markeert en schrapt percentages en euro's in
+  // aanbevelingen en taken die niet herleidbaar zijn tot de gegronde analyse-output. Alleen
+  // weekly en biweekly; monthly heeft zijn eigen gate in buildStructuredMonthlyOutput.
+  if (sopType === "weekly" || sopType === "biweekly") {
+    const allowed = extractGroundedNumbers(analysisOutput + " " + findings.map((f) => JSON.stringify(f)).join(" "));
+    let flaggedNumbers = 0;
+    recs = recs.map((rec) => {
+      const gated = gateItemFields(rec, ["hypothesis", "expected_result"], allowed);
+      if (gated.hadUngrounded) flaggedNumbers += gated.ungrounded.length;
+      return gated.item;
+    });
+    tasks = tasks.map((task) => {
+      const gated = gateItemFields(task, ["title", "description"], allowed);
+      if (gated.hadUngrounded) flaggedNumbers += gated.ungrounded.length;
+      return gated.item;
+    });
+    if (flaggedNumbers > 0) {
+      console.warn(`[${sopType}] number-gate markeerde ${flaggedNumbers} ongegronde cijfers in aanbevelingen of taken`);
+    }
+  }
 
   // Downgrade direct_actions if data reliability is low/critical
   if (reliability && (reliability.overallConfidence === "critical" || reliability.overallConfidence === "low")) {
@@ -239,30 +263,33 @@ ${analysisOutput}`,
 
       await supabase.from("sop_tasks").insert(taskRows);
 
-      // 4. Insert hypothesis-sourced recs → sprint_hypotheses
+      // 4. Hypothesis-sourced recs naar sprint_hypotheses.
+      // SI6: dit liep als enige via een rauwe insert, terwijl second_opinion en
+      // search_terms al saveProposalsReplacingPending gebruiken. Nu loopt alles via die
+      // ene writer: dezelfde veilige semantiek (nieuwe rijen eerst inserten, oude pending
+      // pas daarna opruimen, geaccepteerde voorstellen blijven altijd staan) en een
+      // expliciete bron in plaats van de kolomdefault.
       const hypotheseRecs = recs.filter((rec) => rec.source === "hypothesis");
-      if (hypotheseRecs.length > 0) {
-        const hypotheseRows = hypotheseRecs.map((rec) => ({
-          client_id: clientId,
-          analysis_id: analysisId,
-          hypothesis: rec.hypothesis,
-          expected_result: rec.expected_result,
-          measurement_metric: rec.measurement_metric,
-          timeframe: rec.timeframe,
-          rationale: rec.rationale,
-          ice_impact: rec.ice_impact,
-          ice_confidence: rec.ice_confidence,
-          ice_ease: rec.ice_ease,
-          ice_total: rec.ice_total,
-          status: "pending",
-        }));
-
-        await supabase.from("sprint_hypotheses").insert(hypotheseRows);
-      }
+      const hypotheseRows: SprintHypothesisRow[] = hypotheseRecs.map((rec) => ({
+        client_id: clientId,
+        analysis_id: analysisId,
+        hypothesis: rec.hypothesis,
+        expected_result: rec.expected_result,
+        measurement_metric: rec.measurement_metric,
+        timeframe: rec.timeframe,
+        rationale: rec.rationale,
+        ice_impact: rec.ice_impact,
+        ice_confidence: rec.ice_confidence,
+        ice_ease: rec.ice_ease,
+        ice_total: rec.ice_total,
+        status: "pending",
+        source: "analysis",
+      }));
+      await saveProposalsReplacingPending(supabase, clientId, "analysis", hypotheseRows);
 
       saved = true;
     } catch (e) {
-      console.error(`[${sopType}] Failed to save structured data:`, e instanceof Error ? e.message : e);
+      logger.error(`[${sopType}] Failed to save structured data:`, e instanceof Error ? e.message : e);
     }
   }
 

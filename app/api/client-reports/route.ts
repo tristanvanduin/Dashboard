@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { getSupabase, getOpenRouterKey, fetchClientContext } from "@/lib/analysis/helpers";
-import { callOpenRouter } from "@/lib/analysis/openrouter-client";
+import { callRouted } from "@/lib/analysis/llm-router";
+import { sanitizeAllStrings } from "@/lib/analysis/sanitize";
 import { computeAnalysisTargets } from "@/lib/analysis/compute-targets";
 import { countryLabel } from "@/lib/countries";
 import {
@@ -9,6 +10,7 @@ import {
   markProgressFailed,
   updateProgressPhase,
 } from "@/lib/progress/server";
+import { logger } from "@/lib/logger";
 
 export const maxDuration = 120;
 
@@ -411,7 +413,7 @@ Schrijf nu het rapport. Retourneer ALLEEN valid JSON.`;
       phaseKey: "compose_sections",
       message: "Hoofdsecties van het rapport genereren...",
     });
-    const response = await callOpenRouter({
+    const response = await callRouted({
       apiKey,
       systemPrompt: buildReportPrompt(clientName),
       userMessage,
@@ -435,6 +437,9 @@ Schrijf nu het rapport. Retourneer ALLEEN valid JSON.`;
         throw new Error("Rapport generatie mislukt: geen valid JSON");
       }
     }
+
+    // Q1: sanitize alle klant-facing tekstvelden (no-em-dash, encoding)
+    llmData = sanitizeAllStrings(llmData);
 
     // ── Merge LLM text with computed data ────────────────────────
 
@@ -689,7 +694,7 @@ Retourneer ALLEEN valid JSON:
 
         let countryLlm: Record<string, { heading: string; body: string }> = {};
         try {
-          const cRes = await callOpenRouter({
+          const cRes = await callRouted({
             apiKey,
             systemPrompt: buildReportPrompt(clientName),
             userMessage: countryPrompt,
@@ -697,7 +702,7 @@ Retourneer ALLEEN valid JSON:
             jsonMode: true,
             label: `country-report-${cc}`,
           });
-          countryLlm = JSON.parse(cRes.output);
+          countryLlm = sanitizeAllStrings(JSON.parse(cRes.output));
         } catch { /* use defaults */ }
 
         const cMetrics: MetricSection[] = [
@@ -814,7 +819,7 @@ Retourneer ALLEEN valid JSON:
       .single();
 
     if (insertErr) {
-      console.error("[client-reports] Insert failed:", insertErr.message);
+      logger.error("[client-reports] Insert failed:", insertErr.message);
       await markProgressFailed(supabase, {
         jobId,
         errorMessage: insertErr.message,
@@ -835,7 +840,7 @@ Retourneer ALLEEN valid JSON:
 
     return Response.json({ ...reportData, jobId, reportId: row.id, saved: true });
   } catch (err) {
-    console.error("[client-reports] Generation failed:", err);
+    logger.error("[client-reports] Generation failed:", err);
     await markProgressFailed(supabase, {
       jobId,
       errorMessage: err instanceof Error ? err.message : "Rapport generatie mislukt",

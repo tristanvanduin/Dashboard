@@ -30,12 +30,12 @@ const MOJIBAKE_MAP: [RegExp, string][] = [
   [/â€˜/g, "'"],
   [/â€œ/g, '"'],
   [/â€\u009d/g, '"'],
-  [/â€"/g, "–"],
-  [/â€"/g, "—"],
+  [/â€"/g, " - "],
   [/â€¦/g, "…"],
   [/Â /g, " "],       // non-breaking space mojibake
   [/\u00a0/g, " "],   // actual non-breaking space → normal space
   [/\ufeff/g, ""],    // BOM character
+  [/[—–]/g, " - "],   // literal em/en dash -> " - " (no-em-dash policy, every path fixMojibake runs)
 ];
 
 /**
@@ -119,4 +119,23 @@ export function sanitizeOutput(text: string): string {
   result = deduplicateHeadings(result);
   result = cleanWhitespace(result);
   return result;
+}
+
+/**
+ * Q1: sanitize elk string-veld in een geparsed object of array, met behoud van structuur.
+ * Past fixMojibake toe (no-em-dash plus encoding) op elke string-leaf; getallen, booleans en
+ * null blijven ongemoeid. Voor LLM-output die als JSON is geparsed (zoals client-reports) of
+ * deterministische tekst (zoals second-opinion-comments), zonder de structuur te raken.
+ */
+export function sanitizeAllStrings<T>(value: T): T {
+  if (typeof value === "string") return fixMojibake(value) as unknown as T;
+  if (Array.isArray(value)) return value.map((v) => sanitizeAllStrings(v)) as unknown as T;
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeAllStrings(v);
+    }
+    return out as T;
+  }
+  return value;
 }

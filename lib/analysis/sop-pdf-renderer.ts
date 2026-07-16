@@ -23,6 +23,7 @@ import {
 import * as fs from "fs";
 import * as path from "path";
 import type { FinalSopSynthesis, OperatingDetailLayer } from "@/lib/analysis/monthly-structured";
+import { fixMojibake } from "@/lib/analysis/sanitize";
 
 // Load RM logo as base64 (cached at module level)
 let rmLogoDataUri: string | undefined;
@@ -446,7 +447,7 @@ export function buildMonthlyPdfViewModel(props: SopPdfProps): {
  * Strips **, *, `, ```, ---, and other markdown syntax.
  */
 function cleanMarkdown(text: string): string {
-  return text
+  return fixMojibake(text)
     .replace(/```[\s\S]*?```/g, "") // remove code blocks
     .replace(/\*\*(.+?)\*\*/g, "$1") // bold
     .replace(/\*(.+?)\*/g, "$1") // italic

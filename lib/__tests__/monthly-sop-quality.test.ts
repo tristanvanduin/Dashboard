@@ -93,6 +93,9 @@ console.log("1. Underperformance gets containment and recovery by default");
   assert(/^Containment:/i.test(germanyRec?.hypothesis || ""), "primary route is a single containment recommendation");
   assert((germanyRec?.alternative_strategies || []).some((strategy) => strategy.mode === "containment"), "underperformer includes containment route");
   assert((germanyRec?.alternative_strategies || []).some((strategy) => strategy.mode === "recovery"), "underperformer includes recovery route");
+  // Regressie-guard: genuine onderscheiden findings moeten meerdere onderscheiden routes behouden.
+  // Vangt een toekomstige build die stilletjes een echte route laat vallen.
+  assert(new Set((germanyRec?.alternative_strategies || []).map((strategy) => strategy.action.trim().toLowerCase())).size >= 2, "genuinely distinct findings preserve multiple distinct routes (regression guard)");
 }
 
 console.log("2. Concrete step actions are merged into one coherent dual-route recommendation");
@@ -729,7 +732,14 @@ console.log("18. Validation, containment and recovery do not collapse into one r
 
   const rec = structured.recommendations[0];
   assert((rec.hypothesis.match(/Containment:|Recovery|Validatie:/g) || []).length === 1, "recommendation headline should carry exactly one primary route");
-  assert((rec.alternative_strategies || []).length >= 2, "secondary routes remain available as structured alternatives");
+  // Build-wijziging: de validatie-eerst oorzaak ("tracking moet eerst worden gevalideerd")
+  // framet de hele aanbeveling als validatie in plaats van een redundante parallelle
+  // "valideer tracking" route naast de budget-actie te zetten. De zorg is niet verloren
+  // (de oorzaak wordt geankerd), alleen niet langer als duplicaat-alternatief geteld.
+  assert(/^Validatie:/i.test(rec.hypothesis), "validation-first cause surfaces as a validation-framed recommendation");
+  assert((rec.alternative_strategies || []).length >= 1, "genuine derived route remains as a structured alternative");
+  assert((rec.alternative_strategies || []).every((strategy) => typeof strategy.mode === "string" && typeof strategy.action === "string" && strategy.action.length > 0), "each alternative strategy is structurally valid");
+  // Multi-route-behoud (genuine onderscheiden routes) is geborgd in het underperformer-scenario hierboven.
 }
 
 console.log("19. Unresolved contradiction does not become the primary executive thread");

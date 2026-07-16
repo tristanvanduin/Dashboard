@@ -22,6 +22,7 @@ import {
   buildAvailabilitySummary,
   type ClientDimensionProfile,
 } from "./dimension-availability";
+import { logger } from "@/lib/logger";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -131,7 +132,7 @@ export async function buildEnrichmentContext(opts: EnrichmentOpts): Promise<Enri
     tasks.push(
       fetchStrategicContext(supabase, clientId, analysisDate)
         .then((v) => { result.strategicContext = v; })
-        .catch((e) => { console.error("[enrichment] strategicContext failed:", e); })
+        .catch((e) => { logger.error("[enrichment] strategicContext failed:", e); })
     );
   }
 
@@ -139,7 +140,7 @@ export async function buildEnrichmentContext(opts: EnrichmentOpts): Promise<Enri
     tasks.push(
       calculatePortfolioAnalysis(supabase, clientId, campaignData, campaignMetaData)
         .then((v) => { result.portfolioAnalysis = v; })
-        .catch((e) => { console.error("[enrichment] portfolioAnalysis failed:", e); })
+        .catch((e) => { logger.error("[enrichment] portfolioAnalysis failed:", e); })
     );
   }
 
@@ -147,7 +148,7 @@ export async function buildEnrichmentContext(opts: EnrichmentOpts): Promise<Enri
     tasks.push(
       fetchHypothesisTracking(supabase, clientId)
         .then((v) => { result.hypothesisTracking = v; })
-        .catch((e) => { console.error("[enrichment] hypothesisTracking failed:", e); })
+        .catch((e) => { logger.error("[enrichment] hypothesisTracking failed:", e); })
     );
   }
 
@@ -155,7 +156,7 @@ export async function buildEnrichmentContext(opts: EnrichmentOpts): Promise<Enri
     tasks.push(
       calculateLeadingIndicators(supabase, clientId)
         .then((v) => { result.leadingIndicators = v; })
-        .catch((e) => { console.error("[enrichment] leadingIndicators failed:", e); })
+        .catch((e) => { logger.error("[enrichment] leadingIndicators failed:", e); })
     );
   }
 
@@ -163,7 +164,7 @@ export async function buildEnrichmentContext(opts: EnrichmentOpts): Promise<Enri
     tasks.push(
       fetchSectorBenchmarks(supabase, accountType, clientId)
         .then((v) => { result.sectorBenchmarks = v; })
-        .catch((e) => { console.error("[enrichment] sectorBenchmarks failed:", e); })
+        .catch((e) => { logger.error("[enrichment] sectorBenchmarks failed:", e); })
     );
   }
 
@@ -171,7 +172,7 @@ export async function buildEnrichmentContext(opts: EnrichmentOpts): Promise<Enri
     tasks.push(
       fetchEnhancedChangeHistory(supabase, clientId)
         .then((v) => { result.changeHistory = v; })
-        .catch((e) => { console.error("[enrichment] changeHistory failed:", e); })
+        .catch((e) => { logger.error("[enrichment] changeHistory failed:", e); })
     );
   }
 
@@ -182,14 +183,14 @@ export async function buildEnrichmentContext(opts: EnrichmentOpts): Promise<Enri
         result.pmaxInsights = insights;
         result.pmaxContext = insights.promptContext;
       })
-      .catch((e) => { console.error("[enrichment] pmaxInsights failed:", e); })
+      .catch((e) => { logger.error("[enrichment] pmaxInsights failed:", e); })
   );
 
   // Always compute geo context (only produces output if multi-country)
   tasks.push(
     calculateGeoContext(supabase, clientId)
       .then((v) => { result.geoContext = v; })
-      .catch((e) => { console.error("[enrichment] geoContext failed:", e); })
+      .catch((e) => { logger.error("[enrichment] geoContext failed:", e); })
   );
 
   // Always fetch dimension availability (lightweight query)
@@ -199,7 +200,7 @@ export async function buildEnrichmentContext(opts: EnrichmentOpts): Promise<Enri
         result.dimensionProfile = profile;
         result.dimensionAvailability = buildAvailabilitySummary(profile, sopType);
       })
-      .catch((e) => { console.error("[enrichment] dimensionAvailability failed:", e); })
+      .catch((e) => { logger.error("[enrichment] dimensionAvailability failed:", e); })
   );
 
   await Promise.all(tasks);

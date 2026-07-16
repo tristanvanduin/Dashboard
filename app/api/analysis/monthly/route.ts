@@ -13,11 +13,22 @@ import {
   buildMonthlyStepPrompt,
 } from "@/lib/prompts/sop-prompts";
 import {
-  MONTHLY_V2_STEP_INSTRUCTIONS,
   MONTHLY_STEP7_ACTIONS_INSTRUCTION,
   MONTHLY_STEP7_CLASSIFICATION_INSTRUCTION,
   buildMonthlyCheckpointPrompt,
 } from "@/lib/prompts/monthly-v2";
+import { getAdapter, type ChannelAdapter } from "@/lib/analysis/channel-adapter";
+import "@/lib/analysis/adapters/meta-ads"; // registreert de Meta-adapter zodat getAdapter("meta_ads") resolvet
+import { buildMetaAnalysisData, thirteenMonthStart } from "@/lib/meta/analysis-data";
+import { buildMetaStepMessage, metaStepName } from "@/lib/meta/step-message";
+import "@/lib/analysis/adapters/linkedin-ads"; // registreert de LinkedIn-adapter zodat getAdapter("linkedin_ads") resolvet
+import { buildLinkedinAnalysisData } from "@/lib/linkedin/analysis-data";
+import { buildLinkedinStepMessage, linkedinStepName } from "@/lib/linkedin/step-message";
+import { goalsPlausibilityFromMonthly, resolveTargets, targetActualsFromMonthly, buildConfiguredTargetsBlock, type TargetRow } from "@/lib/analysis/o2-targets-cost";
+import { buildGoalsSection } from "@/lib/prompts/sop-prompts";
+import type { LinkedInIcp } from "@/lib/linkedin/icp-fit";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import "@/lib/analysis/adapters/google-ads"; // registreert de Google-adapter in de registry
 import { aggregateAdGroups } from "@/lib/analysis/aggregate-adgroups";
 import { computeAnalysisTargets } from "@/lib/analysis/compute-targets";
 import { buildEnrichmentContext } from "@/lib/analysis/enrichment";
@@ -53,7 +64,8 @@ import {
 import { syncMerchantProductSnapshots } from "@/lib/api/merchant-products";
 import { parseCheckpointOutput, type CheckpointOutput } from "@/lib/schema/monthly-pipeline-schema";
 import { buildMonthlyQualityGate, validateMonthlyAcceptance } from "@/lib/analysis/monthly-acceptance";
-import { validateStepOutput, type StepValidationResult } from "@/lib/analysis/step-validator";
+import { validateStepOutput, type StepValidationResult, type StepPurityRule } from "@/lib/analysis/step-validator";
+import { buildCanonicalMetricMap, validateFindingClaims, type CanonicalMetricMap } from "@/lib/analysis/claim-consistency";
 import {
   createProgressJob,
   markProgressCompleted,
@@ -61,6 +73,9 @@ import {
   updateProgressPhase,
 } from "@/lib/progress/server";
 import type { GoogleAdsCredentials } from "@/lib/api/google-ads";
+import { logger } from "@/lib/logger";
+import { getClientMemory, buildClientMemoryGrounding } from "@/lib/memory/client-memory";
+import { buildGoogleSignalsSection, type CampaignIsRow, type CampaignMonthlyRow, type KeywordMonthlyRow, type ChangeHistoryRow, type ScheduleRow, type NetworkMonthlyRow, type DeviceMonthlyRow, type SearchTermMonthlyLite, type NegativeKeywordRow } from "@/lib/analysis/signal-section";
 
 function getCredentials(): GoogleAdsCredentials | null {
   const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
@@ -173,18 +188,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function sanitizeStepNarrative(narrative: string): string {
+  // F1: de opener-strip-regexes zijn verwijderd. Ze aten decimalen op ("(gem. 4.6)"
+  // werd "4." waardoor het narratief begon met "6) ..."), wat de afgekapte stap-7
+  // narratives veroorzaakte. De discipline-regel is nu de enige bron van waarheid:
+  // het model schrijft geen recap, dus er valt niets te strippen.
   return narrative
-    .replace(/In stap \d+\s+stelden we vast dat[^.]*\.\s*/gi, "")
-    .replace(/In de vorige stap\s+(stelden|zagen|concludeerden) we[^.]*\.\s*/gi, "")
     .replace(/^\s*\n+/, "")
     .trim();
 }
 
 function sanitizeStepLogEntry(entry: string): string {
-  return entry
-    .replace(/In stap \d+\s+stelden we vast dat[^.]*\.\s*/gi, "")
-    .replace(/In de vorige stap\s+(stelden|zagen|concludeerden) we[^.]*\.\s*/gi, "")
-    .trim();
+  // F1: opener-strip-regexes verwijderd (ze aten decimalen); de discipline-regel voorkomt recaps.
+  return entry.trim();
 }
 
 export function sanitizeStepActionText(stepNumber: number, action: string): string {
@@ -193,10 +208,10 @@ export function sanitizeStepActionText(stepNumber: number, action: string): stri
     cleaned = cleaned
       .replace(/\bVoeg\s+(.+?)\s+toe als negatief zoekwoord/gi, "Plaats $1 als negatief zoekwoord")
       .replace(/\bom\s+(.+?)\s+te onderzoeken\b/gi, "voor een gecontroleerde validatie van $1")
-      .replace(/\bonderzoe[k|kt|ken]+\b/gi, "valideer")
-      .replace(/\banalysee[r|rt|ren]+\b/gi, "valideer")
-      .replace(/\boptimalisee[r|rt|ren]+\b/gi, "stuur concreet bij")
-      .replace(/\bconsolidee[r|rt|ren]+\b/gi, "bundel concreet")
+      .replace(/\bonderzoe(?:k|kt|ken)\b/gi, "valideer")
+      .replace(/\banalysee(?:r|rt|ren)\b/gi, "valideer")
+      .replace(/\boptimalisee(?:r|rt|ren)\b/gi, "stuur concreet bij")
+      .replace(/\bconsolidee(?:r|rt|ren)\b/gi, "bundel concreet")
       .replace(/\s+/g, " ")
       .trim();
   }
@@ -341,6 +356,63 @@ ${promptNote || "Geen extra data-opmerking."}
 
 ## Running context uit laatste checkpoint
 ${runningContext}`;
+}
+
+const HEAVY_WARNING_MATCHERS = [
+  "Wiskundige inconsistentie",
+  "Verwacht 3 findings",
+  "Narratief bevat geen concrete cijfers",
+  "AC-08",
+  "Claim-consistentie",
+  "Wereldkennis",
+];
+
+function countHeavyWarnings(validation: StepValidationResult): number {
+  return validation.warnings.filter((warning) => HEAVY_WARNING_MATCHERS.some((matcher) => warning.includes(matcher))).length;
+}
+
+// F3 4a: generieke repair-trigger. True bij een error, of bij minimaal twee zware warnings.
+// errorsOnly forceert (na de kostenrem) repair alleen nog op errors.
+function shouldRepairStep(validation: StepValidationResult, errorsOnly: boolean): boolean {
+  if (validation.errors.length > 0) return true;
+  if (errorsOnly) return false;
+  return countHeavyWarnings(validation) >= 2;
+}
+
+function buildStepRepairUserMessage(
+  message: string,
+  validation: StepValidationResult,
+  runningContext: string,
+  promptNote?: string
+): string {
+  const feedbackLines = [...validation.errors, ...validation.warnings].slice(0, 12);
+  return `${message}
+
+## REPAIR FEEDBACK
+Je vorige output is afgekeurd. Los exact deze punten op en lever opnieuw volledig JSON:
+${feedbackLines.map((line) => `- ${line}`).join("\n")}
+
+## Data beschikbaarheid voor deze stap
+${promptNote || "Geen extra data-opmerking."}
+
+## Running context uit laatste checkpoint
+${runningContext}`;
+}
+
+type StepAttempt = { step: StepResult; parsed: ParsedStepOutput; validation: StepValidationResult };
+
+// F3 4a: kies het beste van origineel en repair (minste errors, dan minste zware warnings).
+// Bij gelijke kwaliteit houdt dit het origineel, zodat een repair het nooit slechter maakt.
+function pickBetterStepAttempt(original: StepAttempt, repaired: StepAttempt): StepAttempt {
+  if (repaired.validation.errors.length !== original.validation.errors.length) {
+    return repaired.validation.errors.length < original.validation.errors.length ? repaired : original;
+  }
+  const repairedHeavy = countHeavyWarnings(repaired.validation);
+  const originalHeavy = countHeavyWarnings(original.validation);
+  if (repairedHeavy !== originalHeavy) {
+    return repairedHeavy < originalHeavy ? repaired : original;
+  }
+  return original;
 }
 
 function reconcileStep12Output(
@@ -529,7 +601,10 @@ export function salvageStructuredStepOutput(rawOutput: string, stepNumber: numbe
 function parseStructuredStepOutput(
   step: StepResult,
   priorStepConclusion?: string,
-  stepAvailability?: StepDataAvailability | null
+  stepAvailability?: StepDataAvailability | null,
+  canonicalMap?: CanonicalMetricMap,
+  liveTerms?: string[],
+  channelValidation?: { purityRules?: Partial<Record<number, StepPurityRule>>; logFormatSkeletons?: Record<number, RegExp[]> }
 ): { parsed: ParsedStepOutput; validation: StepValidationResult } {
   const salvaged = salvageStructuredStepOutput(step.output, step.stepNumber);
   if (!salvaged.output) {
@@ -573,15 +648,16 @@ function parseStructuredStepOutput(
       actions: reconciledStep.actions,
       step_conclusion: reconciledStep.step_conclusion,
     };
-    const scopedValidation = validateStepOutput(step.stepNumber, validationPayload, priorStepConclusion, { availability: stepAvailability });
+    const scopedValidation = validateStepOutput(step.stepNumber, validationPayload, priorStepConclusion, { availability: stepAvailability, liveTerms, purityRules: channelValidation?.purityRules, logFormatSkeletons: channelValidation?.logFormatSkeletons });
+    const claimWarnings = canonicalMap
+      ? validateFindingClaims(step.stepNumber, reconciledStep.findings, canonicalMap).map((issue) => issue.message)
+      : [];
+    const baseWarnings = salvaged.degraded
+      ? ["Step-output was gedegradeerd of nested JSON; parse salvage toegepast.", ...scopedValidation.warnings]
+      : scopedValidation.warnings;
     return {
       parsed: reconciledStep,
-      validation: salvaged.degraded
-        ? {
-            ...scopedValidation,
-            warnings: ["Step-output was gedegradeerd of nested JSON; parse salvage toegepast.", ...scopedValidation.warnings],
-          }
-        : scopedValidation,
+      validation: { ...scopedValidation, warnings: [...baseWarnings, ...claimWarnings] },
     };
   } catch (error) {
     return {
@@ -683,6 +759,240 @@ interface AssessedSearchTermRow {
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
+// M2 route-wiring: het additieve Meta-pad. Draait de 11-staps Meta SOP op de gedeelde route-helpers
+// met de Meta-datalaag, en laat het Google-pad volledig ongemoeid via de vroege branch in POST.
+// LIVE-ONGETEST: de Supabase-fetch in buildMetaAnalysisData en de end-to-end run zijn pas met echte
+// Meta-data te verifieren. Bewust nog zonder checkpoints, acceptance-rapport en de volledige
+// structured_monthly_v2-aggregatie; dat zijn verfijningen op deze runnende kern.
+async function runMetaMonthlyAnalysis(
+  supabase: SupabaseClient,
+  adapter: ChannelAdapter,
+  clientId: string,
+  jobId: string
+, evalCapture: { fixtureSet: string } | null = null): Promise<Response> {
+  const apiKey = getOpenRouterKey();
+  if (!apiKey) return Response.json({ error: "OPENROUTER_API_KEY niet geconfigureerd" }, { status: 500 });
+
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const analysisYear = currentMonth === 1 ? now.getFullYear() - 1 : now.getFullYear();
+  const lastCompleteMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+  const periodEnd = fmt(new Date(analysisYear, lastCompleteMonth, 0));
+  const periodStart = thirteenMonthStart(periodEnd);
+
+  await createProgressJob(supabase, {
+    jobId,
+    clientId,
+    jobType: "monthly_sop",
+    initialMessage: "Meta-analyse wordt voorbereid...",
+    metadata: { sop_type: adapter.sopTypeKey },
+  });
+  await updateProgressPhase(supabase, {
+    jobId,
+    phaseKey: "load_meta_data",
+    message: "Meta-data en voorgerekende feiten laden...",
+  });
+
+  const clientCtx = await fetchClientContext(supabase, clientId);
+  const { goalsSection, accountType } = clientCtx;
+
+  const { canonicalMetricMap, stepFacts } = await buildMetaAnalysisData(supabase, clientId, periodEnd);
+
+  // E1-wiring (Meta): het client-geheugen eenmalig ophalen, zelfde patroon als Google.
+  const clientMemorySection = buildClientMemoryGrounding(await getClientMemory(supabase, clientId));
+
+  const shared = { supabase, apiKey, clientId, sopType: adapter.sopTypeKey, periodStart, periodEnd, runKey: jobId, channel: adapter.channel, evalCapture };
+  const parsedSteps: ParsedStepOutput[] = [];
+  const allSteps: StepResult[] = [];
+  const conclusions: string[] = [];
+  const analysisDate = new Date().toISOString().split("T")[0];
+
+  for (let stepNumber = 1; stepNumber <= adapter.stepCount; stepNumber++) {
+    const stepName = metaStepName(stepNumber);
+    await updateProgressPhase(supabase, {
+      jobId,
+      phaseKey: `run_step_${stepNumber}`,
+      message: `Stap ${stepNumber} uitvoeren: ${stepName}...`,
+    });
+    const systemPrompt = buildMonthlyStepPrompt(
+      goalsSection,
+      accountType,
+      adapter.stepInstructions[stepNumber],
+      conclusions.slice(-2).join("\n\n"),
+      adapter,
+      clientMemorySection
+    );
+    const userMessage = buildMetaStepMessage(stepNumber, stepFacts[stepNumber], clientId);
+    const step = await runStep({ ...shared, stepNumber, stepName, systemPrompt, userMessage });
+    allSteps.push(step);
+    const priorStepConclusion = conclusions.at(-1);
+    const { parsed } = parseStructuredStepOutput(
+      step,
+      priorStepConclusion,
+      undefined,
+      canonicalMetricMap,
+      undefined,
+      { purityRules: adapter.purityRules, logFormatSkeletons: adapter.logFormatSkeletons }
+    );
+    parsedSteps.push(parsed);
+    if (parsed.step_conclusion) conclusions.push(parsed.step_conclusion);
+    await saveAnalysisOutputSection({
+      supabase,
+      row: {
+        client_id: clientId,
+        sop_type: adapter.sopTypeKey,
+        analysis_date: analysisDate,
+        period_start: periodStart,
+        period_end: periodEnd,
+        section: stepName,
+        output: step.output,
+        model_used: step.model,
+        tokens_used: step.tokensUsed,
+        step_number: stepNumber,
+        step_name: stepName,
+      },
+    });
+  }
+
+  const rawStepFindings = parsedSteps.flatMap((step) => step.findings);
+  const canonical = canonicalizeFindings(rawStepFindings, {}, {
+    entityAliases: adapter.entityAliases,
+    metricAliases: adapter.metricAliases,
+    validClusters: adapter.issueClusters,
+  });
+  const curatedFindings = curateMonthlyStructuredFindings(canonical.findings);
+  const curatedClusters = clusterFindings(curatedFindings);
+
+  return Response.json({
+    ok: true,
+    channel: adapter.channel,
+    period: { start: periodStart, end: periodEnd },
+    steps: parsedSteps.length,
+    findings: curatedFindings.length,
+    clusters: curatedClusters.length,
+    tokensUsed: allSteps.reduce((sum, current) => sum + (current.tokensUsed || 0), 0),
+  });
+}
+
+// L2 route-wiring: het additieve LinkedIn-pad. Draait de 9-staps LinkedIn SOP op de gedeelde
+// route-helpers met de LinkedIn-datalaag, en laat het Google- en Meta-pad ongemoeid via de vroege
+// branch. LIVE-ONGETEST: de Supabase-fetch in buildLinkedinAnalysisData en de end-to-end run zijn
+// pas met echte L1-data via MDP te verifieren. Bewust nog zonder checkpoints, acceptance en de
+// volledige synthese; dat zijn verfijningen op deze runnende kern, net als bij Meta.
+async function runLinkedinMonthlyAnalysis(
+  supabase: SupabaseClient,
+  adapter: ChannelAdapter,
+  clientId: string,
+  jobId: string
+, evalCapture: { fixtureSet: string } | null = null): Promise<Response> {
+  const apiKey = getOpenRouterKey();
+  if (!apiKey) return Response.json({ error: "OPENROUTER_API_KEY niet geconfigureerd" }, { status: 500 });
+
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const analysisYear = currentMonth === 1 ? now.getFullYear() - 1 : now.getFullYear();
+  const lastCompleteMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+  const periodEnd = fmt(new Date(analysisYear, lastCompleteMonth, 0));
+  const periodStart = thirteenMonthStart(periodEnd);
+
+  await createProgressJob(supabase, {
+    jobId,
+    clientId,
+    jobType: "monthly_sop",
+    initialMessage: "LinkedIn-analyse wordt voorbereid...",
+    metadata: { sop_type: adapter.sopTypeKey },
+  });
+  await updateProgressPhase(supabase, {
+    jobId,
+    phaseKey: "load_linkedin_data",
+    message: "LinkedIn-data en voorgerekende feiten laden...",
+  });
+
+  const clientCtx = await fetchClientContext(supabase, clientId);
+  const { goalsSection, accountType } = clientCtx;
+
+  // De ICP-definitie voedt de kernstap (stap 5); zonder degradeert die netjes naar beschrijvend.
+  const { data: settings } = await supabase.from("client_settings").select("linkedin_icp").eq("client_id", clientId).maybeSingle();
+  const icp = (settings as { linkedin_icp?: LinkedInIcp } | null)?.linkedin_icp ?? null;
+
+  const { canonicalMetricMap, stepFacts } = await buildLinkedinAnalysisData(supabase, clientId, periodEnd, { icp });
+
+  // E1-wiring (LinkedIn): het client-geheugen eenmalig ophalen, zelfde patroon als Google.
+  const clientMemorySection = buildClientMemoryGrounding(await getClientMemory(supabase, clientId));
+
+  const shared = { supabase, apiKey, clientId, sopType: adapter.sopTypeKey, periodStart, periodEnd, runKey: jobId, channel: adapter.channel, evalCapture };
+  const parsedSteps: ParsedStepOutput[] = [];
+  const allSteps: StepResult[] = [];
+  const conclusions: string[] = [];
+  const analysisDate = new Date().toISOString().split("T")[0];
+
+  for (let stepNumber = 1; stepNumber <= adapter.stepCount; stepNumber++) {
+    const stepName = linkedinStepName(stepNumber);
+    await updateProgressPhase(supabase, {
+      jobId,
+      phaseKey: `run_step_${stepNumber}`,
+      message: `Stap ${stepNumber} uitvoeren: ${stepName}...`,
+    });
+    const systemPrompt = buildMonthlyStepPrompt(
+      goalsSection,
+      accountType,
+      adapter.stepInstructions[stepNumber],
+      conclusions.slice(-2).join("\n\n"),
+      adapter,
+      clientMemorySection
+    );
+    const userMessage = buildLinkedinStepMessage(stepNumber, stepFacts[stepNumber], clientId);
+    const step = await runStep({ ...shared, stepNumber, stepName, systemPrompt, userMessage });
+    allSteps.push(step);
+    const priorStepConclusion = conclusions.at(-1);
+    const { parsed } = parseStructuredStepOutput(
+      step,
+      priorStepConclusion,
+      undefined,
+      canonicalMetricMap,
+      undefined,
+      { purityRules: adapter.purityRules, logFormatSkeletons: adapter.logFormatSkeletons }
+    );
+    parsedSteps.push(parsed);
+    if (parsed.step_conclusion) conclusions.push(parsed.step_conclusion);
+    await saveAnalysisOutputSection({
+      supabase,
+      row: {
+        client_id: clientId,
+        sop_type: adapter.sopTypeKey,
+        analysis_date: analysisDate,
+        period_start: periodStart,
+        period_end: periodEnd,
+        section: stepName,
+        output: step.output,
+        model_used: step.model,
+        tokens_used: step.tokensUsed,
+        step_number: stepNumber,
+        step_name: stepName,
+      },
+    });
+  }
+
+  const rawStepFindings = parsedSteps.flatMap((step) => step.findings);
+  const canonical = canonicalizeFindings(rawStepFindings, {}, {
+    entityAliases: adapter.entityAliases,
+    metricAliases: adapter.metricAliases,
+    validClusters: adapter.issueClusters,
+  });
+  const curatedFindings = curateMonthlyStructuredFindings(canonical.findings);
+  const curatedClusters = clusterFindings(curatedFindings);
+
+  return Response.json({
+    ok: true,
+    channel: adapter.channel,
+    period: { start: periodStart, end: periodEnd },
+    steps: parsedSteps.length,
+    findings: curatedFindings.length,
+    clusters: curatedClusters.length,
+    tokensUsed: allSteps.reduce((sum, current) => sum + (current.tokensUsed || 0), 0),
+  });
+}
+
 export async function POST(request: NextRequest) {
   const supabase = getSupabase();
   if (!supabase) return Response.json({ error: "Supabase niet geconfigureerd" }, { status: 500 });
@@ -693,16 +1003,28 @@ export async function POST(request: NextRequest) {
 
   let clientId: string;
   let jobId = crypto.randomUUID();
+  let adapter: ChannelAdapter;
+  let evalCapture: { fixtureSet: string } | null = null;
   try {
     const body = await request.json();
     clientId = body.client_id;
     jobId = body.job_id || crypto.randomUUID();
+    adapter = getAdapter(body.channel || "google_ads");
+    evalCapture = body.capture_fixtures === true
+      ? { fixtureSet: typeof body.fixture_set === "string" && body.fixture_set.trim() ? body.fixture_set.trim() : `${clientId}:${jobId}` }
+      : null;
     if (!clientId) throw new Error("missing");
   } catch {
     return Response.json({ error: "Verwacht: { client_id: string }" }, { status: 400 });
   }
 
   try {
+    if (adapter.channel === "meta_ads") {
+      return await runMetaMonthlyAnalysis(supabase, adapter, clientId, jobId, evalCapture);
+    }
+    if (adapter.channel === "linkedin_ads") {
+      return await runLinkedinMonthlyAnalysis(supabase, adapter, clientId, jobId, evalCapture);
+    }
     const now = new Date();
     const currentMonth = now.getMonth() + 1;
     const analysisYear = currentMonth === 1 ? now.getFullYear() - 1 : now.getFullYear();
@@ -718,7 +1040,7 @@ export async function POST(request: NextRequest) {
       clientId,
       jobType: "monthly_sop",
       initialMessage: "Analyse wordt voorbereid...",
-      metadata: { sop_type: "monthly" },
+      metadata: { sop_type: adapter.sopTypeKey },
     });
     await updateProgressPhase(supabase, {
       jobId,
@@ -774,9 +1096,92 @@ export async function POST(request: NextRequest) {
       computeAnalysisTargets(supabase, clientId),
     ]);
 
-    const { goalsSection, accountType } = clientCtx;
+    const { accountType } = clientCtx;
+    let goalsSection = clientCtx.goalsSection;
+    // E1-wiring: het client-geheugen eenmalig ophalen voor de lus (niet per step) en
+    // naar een grounding-blok formatteren; leeg blok bij een klant zonder historie.
+    const clientMemory = await getClientMemory(supabase, clientId);
+    const clientMemorySection = buildClientMemoryGrounding(clientMemory);
+
+    // A-track: de deterministisch gedetecteerde signalen en cross-checks, eenmalig voor de
+    // lus. Zelfde principe als het geheugenblok: een lege sectie geeft byte-identieke
+    // prompts, dus een account zonder signalen merkt niets.
+    const analysisMonth = periodEnd.slice(0, 7);
+    const prevMonthDate = new Date(periodEndDate.getFullYear(), periodEndDate.getMonth() - 1, 1);
+    const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, "0")}`;
+
+    // De wijzigingshistorie bepaalt of concurrentiedruk bewezen mag heten. CONSERVATIEVE
+    // REGEL: nul rijen in de analysemaand telt als bron-onbekend (null), niet als "geen
+    // wijzigingen". Een actief account zonder enige wijziging is onwaarschijnlijker dan een
+    // niet-gevulde bron, en over-claimen is de duurdere fout.
+    const negativesRes = await supabase
+      .from("ads_negative_keywords")
+      .select("level, campaign_name, ad_group_name, list_name, keyword_text, match_type")
+      .eq("client_id", clientId);
+
+    const changeHistoryRes = await supabase
+      .from("ads_change_history")
+      .select("resource_type, campaign_name")
+      .eq("client_id", clientId)
+      .gte("change_datetime", `${analysisMonth}-01`)
+      .lte("change_datetime", `${periodEnd}T23:59:59`);
+    const changeHistoryRows = (changeHistoryRes.data ?? []) as ChangeHistoryRow[];
+
+    // De zoektermvolumes: de DERDE onafhankelijke bron voor de marktshift-bevestiging.
+    // ads_search_terms_monthly wordt wel gesynct maar werd door deze route niet geladen
+    // (searchRes haalt de wasteful-tabel op, een andere bron met een ander doel).
+    const termsRes = await supabase
+      .from("ads_search_terms_monthly")
+      .select("month, impressions, match_type, cost, clicks, conversions")
+      .eq("client_id", clientId)
+      .gte("month", `${prevMonth}-01`)
+      .lte("month", periodEnd);
+    const volumeFor = (m: string): number | null => {
+      const rows = (termsRes.data ?? []).filter((r) => String(r.month ?? "").slice(0, 7) === m);
+      return rows.length > 0 ? rows.reduce((acc, r) => acc + Number(r.impressions ?? 0), 0) : null;
+    };
+
+    const yoyRowForMonth = (accountYoyRes.data ?? []).find((r) => String(r.month ?? "").slice(0, 7) === analysisMonth) as { impressions_yoy_pct?: number | null } | undefined;
+    const signalsSection = buildGoogleSignalsSection({
+      periodMonth: analysisMonth,
+      prevMonth,
+      campaignIs: (isRes.data ?? []) as unknown as CampaignIsRow[],
+      campaignMonthly: (campaignRes.data ?? []) as unknown as CampaignMonthlyRow[],
+      keywords: (keywordRes.data ?? []) as unknown as KeywordMonthlyRow[],
+      schedule: (scheduleRes.data ?? []) as unknown as ScheduleRow[],
+      networks: (networkRes.data ?? []) as unknown as NetworkMonthlyRow[],
+      devices: (deviceRes.data ?? []) as unknown as DeviceMonthlyRow[],
+      pmaxCampaignNames: (campaignMetaRes.data ?? [])
+        .filter((m) => String((m as { campaign_type?: string }).campaign_type ?? "").toUpperCase().includes("PERFORMANCE_MAX"))
+        .map((m) => String((m as { campaign_name?: string }).campaign_name ?? ""))
+        .filter((n) => n.length > 0),
+      // De sync schrijft *_yoy_pct als PROCENT; de detector verwacht een relatieve fractie.
+      yoyImpressionsDeltaFraction: yoyRowForMonth?.impressions_yoy_pct != null ? Number(yoyRowForMonth.impressions_yoy_pct) / 100 : null,
+      searchTermsVolume: volumeFor(analysisMonth),
+      prevSearchTermsVolume: volumeFor(prevMonth),
+      searchTerms: (termsRes.data ?? []) as unknown as SearchTermMonthlyLite[],
+      negatives: (negativesRes.data ?? []) as unknown as NegativeKeywordRow[],
+      changeHistory: changeHistoryRows.length > 0 ? changeHistoryRows : null,
+      hasPmaxCampaign: (campaignMetaRes.data ?? []).some((m) => String((m as { campaign_type?: string }).campaign_type ?? "").toUpperCase().includes("PERFORMANCE_MAX")),
+    }).section;
 
     const accountData = accountRes.data ?? [];
+    // W1.1 (O2): plausibiliteits-flag op de goals-targets tegen de laatste twee afgesloten
+    // maanden. Zonder flag geen herbouw, dus byte-identiek aan het bestaande pad.
+    let goalsTargetsImplausible = false;
+    if (clientCtx.goalsConfig) {
+      const goalsPlausibility = goalsPlausibilityFromMonthly(
+        clientCtx.goalsConfig as { cpaTarget?: number; roasTarget?: number },
+        accountData as Array<{ month?: string; cost?: number; conversions?: number; conversions_value?: number }>
+      );
+      if (goalsPlausibility?.target_implausible) {
+        goalsSection = buildGoalsSection({
+          ...(clientCtx.goalsConfig as unknown as Parameters<typeof buildGoalsSection>[0]),
+          plausibility: { target_implausible: true, detail: goalsPlausibility.detail },
+        });
+        goalsTargetsImplausible = true;
+      }
+    }
     if (!usePreparedSummary && accountData.length === 0) {
       const freshness = await checkDataFreshness(supabase, clientId);
       await markProgressFailed(supabase, {
@@ -795,6 +1200,13 @@ export async function POST(request: NextRequest) {
 
     const weeklyData = weeklyRes.data ?? [];
     const campaignData = campaignRes.data ?? [];
+    // F4: canonical metric map uit dezelfde rijen die de prompts voeden, voor claim-consistentie.
+    const canonicalMetricMap = buildCanonicalMetricMap(
+      campaignData as Record<string, unknown>[],
+      accountData as Record<string, unknown>[],
+      periodStart,
+      periodEnd
+    );
     const adgroupData = adgroupRes.data ?? [];
     const isData = isRes.data ?? [];
     const searchData = searchRes.data ?? [];
@@ -812,6 +1224,12 @@ export async function POST(request: NextRequest) {
     const productData = productRes.data ?? [];
     const keywordData = keywordRes.data ?? [];
     const enrichedProductData = enrichedProductRes.data ?? [];
+    // G4: live-termenset (campagnenamen, zoektermen, productnamen) voor de wereldkennis-check.
+    const liveTermSet = Array.from(new Set([
+      ...campaignData.map((row: Record<string, unknown>) => String(row.campaign_name || "")),
+      ...searchData.map((row: Record<string, unknown>) => String(row.search_term || "")),
+      ...productData.map((row: Record<string, unknown>) => String(row.product_title || "")),
+    ].map((term) => term.toLowerCase().trim()).filter((term) => term.length >= 3)));
     const checkoutData = checkoutRes.data ?? [];
     const merchantSync = await syncMerchantProductSnapshots({
       supabase,
@@ -835,13 +1253,40 @@ export async function POST(request: NextRequest) {
       campaignMetaData,
     });
 
+    // W1.1c: ingestelde targets (client_targets) voor deze maand. UITSLUITEND uit
+    // client_targets (no-go: geen kpiTargets in dit pad); leeg in productie tot WL.2,
+    // dus zonder targets blijft het pad byte-identiek.
+    // LIVE-ONGETEST tot migratie 002 draait.
+    const { data: configuredTargetRows } = await supabase
+      .from("client_targets")
+      .select("channel, metric, target_value, valid_from, valid_to")
+      .eq("client_id", clientId)
+      .eq("channel", "google_ads");
+    const configuredTargets = resolveTargets(
+      ((configuredTargetRows ?? []) as Array<Record<string, unknown>>).map((row) => ({
+        channel: String(row.channel),
+        metric: String(row.metric),
+        targetValue: Number(row.target_value),
+        validFrom: String(row.valid_from),
+        validTo: row.valid_to == null ? null : String(row.valid_to),
+      })) as TargetRow[],
+      "google_ads",
+      periodEnd
+    );
+    const configuredBlock = buildConfiguredTargetsBlock(
+      configuredTargets,
+      targetActualsFromMonthly(accountData as Array<{ month?: string; cost?: number; conversions?: number; conversions_value?: number }>)
+    );
+    const configuredTargetsText = configuredBlock ? `\n\n${configuredBlock.text}` : "";
+    if (configuredBlock?.anyImplausible) goalsTargetsImplausible = true;
+
     // Format monthly targets from forecast engine
     const targetText = targetResult
       ? `\n\n## Maandtargets (berekend door forecast engine, zelfde als dashboard)
 ${targetResult.monthlyExpected.map((t) => `- Maand ${t.month}: verwacht ${t.conversions} conversies, €${t.revenue} omzet, €${t.adSpend} spend`).join("\n")}
 Analyse maand: ${lastCompleteMonth} (${["Jan","Feb","Mrt","Apr","Mei","Jun","Jul","Aug","Sep","Okt","Nov","Dec"][lastCompleteMonth - 1]} ${analysisYear})
-Verwacht deze maand: ${targetResult.monthlyExpected[lastCompleteMonth - 1]?.conversions ?? "?"} conversies`
-      : "";
+Verwacht deze maand: ${targetResult.monthlyExpected[lastCompleteMonth - 1]?.conversions ?? "?"} conversies` + configuredTargetsText
+      : configuredTargetsText;
 
     // Format campaign metadata for user message
     const activeCampaigns = campaignMetaData.filter((cm: Record<string, unknown>) => {
@@ -860,7 +1305,7 @@ Verwacht deze maand: ${targetResult.monthlyExpected[lastCompleteMonth - 1]?.conv
         + (pausedCampaigns.length > 0 ? `\n\nBELANGRIJK: ${pausedCampaigns.length} campagne(s) zijn GEPAUZEERD of VERWIJDERD: ${pausedCampaigns.map((c: Record<string, unknown>) => c.campaign_name).join(", ")}. Doe GEEN aanbevelingen voor gepauzeerde/verwijderde campagnes. Vermeld ze alleen als historische context.` : "")
       : "";
 
-    const shared = { supabase, apiKey, clientId, sopType: "monthly", periodStart, periodEnd };
+    const shared = { supabase, apiKey, clientId, sopType: "monthly", periodStart, periodEnd, runKey: jobId, channel: "google_ads", evalCapture };
     const steps: StepResult[] = [];
     const machineSteps: StepResult[] = [];
     const parsedSteps: ParsedStepOutput[] = [];
@@ -877,6 +1322,7 @@ Verwacht deze maand: ${targetResult.monthlyExpected[lastCompleteMonth - 1]?.conv
     async function runCheckpoint(name: string, clusterStepNumbers: number[]): Promise<void> {
       const clusterSteps = parsedSteps.filter((step) => clusterStepNumbers.includes(step.stepNumber));
       const checkpointStep = await runStep({
+        evalKind: "checkpoint",
         ...shared,
         stepNumber: 200 + checkpointSteps.length + 1,
         stepName: name,
@@ -901,10 +1347,71 @@ ${runningContext}`,
       checkpointSteps.push(checkpointStep);
       machineSteps.push(checkpointStep);
 
-      const parsed = parseCheckpointOutput(checkpointStep.output);
+      let parsed = parseCheckpointOutput(checkpointStep.output);
+      let parsedOutput = checkpointStep.output;
+      if (!parsed.success) {
+        // F3 4b: een jsonMode-repair met de parse-fout als feedback voordat de tekstuele fallback wordt gebruikt.
+        const repairStep = await runStep({
+          evalKind: "repair",
+          ...shared,
+          stepNumber: 200 + checkpointSteps.length + 1,
+          stepName: name,
+          systemPrompt: buildMonthlyCheckpointPrompt(name),
+          jsonMode: true,
+          userMessage: `Je vorige checkpoint-output voor ${name} kon niet als JSON worden geparsed (${parsed.error}). Antwoord nu met EXACT een JSON-object conform het checkpoint-schema, zonder markdown code fence en zonder toelichting buiten JSON.
+
+Stap-outputs uit ${name}:
+
+${JSON.stringify(clusterSteps.map((step) => ({
+  stepNumber: step.stepNumber,
+  stepName: step.stepName,
+  narrative: step.narrative,
+  log_entries: step.log_entries,
+  findings: step.findings,
+  status: step.status,
+  actions: step.actions,
+  step_conclusion: step.step_conclusion,
+})), null, 2)}
+
+Vorige running context:
+${runningContext}`,
+        });
+        checkpointSteps.push(repairStep);
+        machineSteps.push(repairStep);
+        const reparsed = parseCheckpointOutput(repairStep.output);
+        if (reparsed.success) {
+          parsed = reparsed;
+          parsedOutput = repairStep.output;
+        }
+      }
       if (parsed.success) {
         runningContext = parsed.data.running_context;
-        checkpointOutputs.push({ name, parsed: parsed.data, raw: checkpointStep.output });
+        checkpointOutputs.push({ name, parsed: parsed.data, raw: parsedOutput });
+        // W1.3 (pump, ontwerpbesluit 1): persisteer het GELDIGE checkpoint zodat een
+        // hervatte run de runningContext kan herstellen; een gefaalde parse wordt bewust
+        // niet opgeslagen zodat resume het checkpoint opnieuw draait. Upsert, dus
+        // idempotent. LIVE-ONGETEST tot de eerste onderbroken run.
+        if (supabase) {
+          const { error: checkpointSaveError } = await saveAnalysisOutputSection({
+            supabase,
+            row: {
+              client_id: clientId,
+              sop_type: "monthly",
+              analysis_date: new Date().toISOString().split("T")[0],
+              period_start: periodStart,
+              period_end: periodEnd,
+              section: name,
+              output: parsedOutput,
+              model_used: checkpointStep.model,
+              tokens_used: checkpointStep.tokensUsed,
+              step_number: 0,
+              step_name: name,
+            },
+          });
+          if (checkpointSaveError) {
+            logger.error(`[monthly] Checkpoint-sectie opslaan faalde voor ${name}:`, checkpointSaveError);
+          }
+        }
         return;
       }
 
@@ -912,8 +1419,8 @@ ${runningContext}`,
         .slice(-2)
         .map((step) => `Stap ${step.stepNumber} (${step.stepName}) bevestigt: ${step.findings.slice(0, 2).map((finding) => `${finding.entity_name} ${finding.metric}`).join(", ") || "geen materieel signaal"}.`)
         .join(" ");
-      checkpointOutputs.push({ name, parsed: null, raw: checkpointStep.output });
-      console.error(`[monthly] Checkpoint parse failed for ${name}:`, parsed.error);
+      checkpointOutputs.push({ name, parsed: null, raw: parsedOutput });
+      logger.error(`[monthly] Checkpoint parse failed for ${name}:`, parsed.error);
     }
 
     const accountYoySection = accountYoyData.length > 0
@@ -1104,6 +1611,7 @@ ${runningContext}`,
         })()
       : summarizeProductContext(monthlyProductContext);
 
+    let repairCount = 0;
     const runNarrativeStep = async (stepNumber: number, stepName: string, message: string) => {
       await updateProgressPhase(supabase, {
         jobId,
@@ -1117,19 +1625,28 @@ ${runningContext}`,
         systemPrompt: buildMonthlyStepPrompt(
           goalsSection,
           accountType,
-          MONTHLY_V2_STEP_INSTRUCTIONS[stepNumber],
-          `${runningContext}\n\n${conclusions.slice(-2).join("\n\n")}`
+          adapter.stepInstructions[stepNumber],
+          `${runningContext}\n\n${conclusions.slice(-2).join("\n\n")}`,
+          adapter,
+          clientMemorySection,
+          signalsSection
         ),
         userMessage: `${message}\n\n## Data beschikbaarheid voor deze stap\n${stepAvailabilityByStep.get(stepNumber)?.promptNote || "Geen extra data-opmerking."}\n\n## Running context uit laatste checkpoint\n${runningContext}`,
       });
       const priorStepConclusion = conclusions.at(-1);
-      let { parsed, validation } = parseStructuredStepOutput(step, priorStepConclusion, stepAvailabilityByStep.get(stepNumber));
-      if (shouldRepairStep12Runtime(step, validation)) {
-        console.warn("[monthly] Step 12 runtime repair triggered", {
-          outputLength: step.output.trim().length,
+      let { parsed, validation } = parseStructuredStepOutput(step, priorStepConclusion, stepAvailabilityByStep.get(stepNumber), canonicalMetricMap, liveTermSet, { purityRules: adapter.purityRules, logFormatSkeletons: adapter.logFormatSkeletons });
+      const step12Repair = shouldRepairStep12Runtime(step, validation);
+      const genericRepair = shouldRepairStep(validation, repairCount > 5);
+      if (step12Repair || genericRepair) {
+        logger.warn(`[monthly] Step ${stepNumber} repair triggered`, {
           errors: validation.errors,
+          heavyWarnings: countHeavyWarnings(validation),
         });
-        step = await runStep({
+        repairCount++;
+        const repairMessage = step12Repair
+          ? buildStep12RepairUserMessage(message, runningContext, stepAvailabilityByStep.get(stepNumber)?.promptNote)
+          : buildStepRepairUserMessage(message, validation, runningContext, stepAvailabilityByStep.get(stepNumber)?.promptNote);
+        const repairedStep = await runStep({
           ...shared,
           stepNumber,
           stepName,
@@ -1137,16 +1654,23 @@ ${runningContext}`,
           systemPrompt: buildMonthlyStepPrompt(
             goalsSection,
             accountType,
-            MONTHLY_V2_STEP_INSTRUCTIONS[stepNumber],
-            `${runningContext}\n\n${conclusions.slice(-2).join("\n\n")}`
+            adapter.stepInstructions[stepNumber],
+            `${runningContext}\n\n${conclusions.slice(-2).join("\n\n")}`,
+            adapter,
+            clientMemorySection,
+            signalsSection
           ),
-          userMessage: buildStep12RepairUserMessage(
-            message,
-            runningContext,
-            stepAvailabilityByStep.get(stepNumber)?.promptNote
-          ),
+          userMessage: repairMessage,
         });
-        ({ parsed, validation } = parseStructuredStepOutput(step, priorStepConclusion, stepAvailabilityByStep.get(stepNumber)));
+        const repairedParse = parseStructuredStepOutput(repairedStep, priorStepConclusion, stepAvailabilityByStep.get(stepNumber), canonicalMetricMap, liveTermSet, { purityRules: adapter.purityRules, logFormatSkeletons: adapter.logFormatSkeletons });
+        const best = pickBetterStepAttempt(
+          { step, parsed, validation },
+          { step: repairedStep, parsed: repairedParse.parsed, validation: repairedParse.validation }
+        );
+        step = best.step;
+        parsed = best.parsed;
+        validation = best.validation;
+        step.retries = (step.retries ?? 0) + 1;
       }
       steps.push(step);
       if (stepNumber === 7 && step5TruthMap.size > 0) {
@@ -1155,9 +1679,36 @@ ${runningContext}`,
       parsedSteps.push(parsed);
       stepValidations.push(validation);
       if (!validation.valid || validation.warnings.length > 0) {
-        console.warn(`[monthly] Step ${stepNumber} validation`, validation);
+        logger.warn(`[monthly] Step ${stepNumber} validation`, validation);
       }
       conclusions.push(parsed.step_conclusion);
+
+      // W1.3 (pump, extractie stap 1): persisteer ELKE reguliere stap direct, de basis
+      // van hervatbaarheid. De stappen 6, 7 en 9 hebben verderop hun eigen expliciete
+      // sectie-save en worden hier overgeslagen. Upsert op de bestaande conflict-sleutel,
+      // dus een herdraai op dezelfde dag overschrijft zijn eigen sectie.
+      // LIVE-ONGETEST tot de eerste onderbroken run.
+      if (![6, 7, 9].includes(stepNumber)) {
+        const { error: stepSaveError } = await saveAnalysisOutputSection({
+          supabase,
+          row: {
+            client_id: clientId,
+            sop_type: "monthly",
+            analysis_date: new Date().toISOString().split("T")[0],
+            period_start: periodStart,
+            period_end: periodEnd,
+            section: stepName,
+            output: step.output,
+            model_used: step.model,
+            tokens_used: step.tokensUsed,
+            step_number: stepNumber,
+            step_name: stepName,
+          },
+        });
+        if (stepSaveError) {
+          logger.error(`[monthly] Stap-sectie opslaan faalde voor stap ${stepNumber}:`, stepSaveError);
+        }
+      }
       return step;
     };
 
@@ -1251,8 +1802,11 @@ ${runningContext}`,
         systemPrompt: buildMonthlyStepPrompt(
           goalsSection,
           accountType,
-          `${MONTHLY_V2_STEP_INSTRUCTIONS[7]}\n\n${MONTHLY_STEP7_CLASSIFICATION_INSTRUCTION}`,
-          `${runningContext}\n\n${conclusions.slice(-2).join("\n\n")}`
+          `${adapter.stepInstructions[7]}\n\n${MONTHLY_STEP7_CLASSIFICATION_INSTRUCTION}`,
+          `${runningContext}\n\n${conclusions.slice(-2).join("\n\n")}`,
+          adapter,
+          clientMemorySection,
+          signalsSection
         ),
         userMessage: `${baseInstruction}
 
@@ -1271,7 +1825,7 @@ ${stepAvailabilityByStep.get(7)?.promptNote || "Geen extra data-opmerking."}
 ${runningContext}`,
       });
       machineSteps.push(step7a);
-      const parsed7aResult = parseStructuredStepOutput(step7a, priorStepConclusion, stepAvailabilityByStep.get(7));
+      const parsed7aResult = parseStructuredStepOutput(step7a, priorStepConclusion, stepAvailabilityByStep.get(7), canonicalMetricMap, liveTermSet);
       const parsed7a = parsed7aResult.parsed;
       if (step5TruthMap.size > 0) {
         parsed7a.findings = applyStep5FindingTruth(parsed7a.findings, step5TruthMap);
@@ -1290,8 +1844,11 @@ ${runningContext}`,
         systemPrompt: buildMonthlyStepPrompt(
           goalsSection,
           accountType,
-          `${MONTHLY_V2_STEP_INSTRUCTIONS[7]}\n\n${MONTHLY_STEP7_ACTIONS_INSTRUCTION}`,
-          `${runningContext}\n\n${conclusions.slice(-2).join("\n\n")}\n\n## Uitkomst deel A\n${parsed7a.step_conclusion}`
+          `${adapter.stepInstructions[7]}\n\n${MONTHLY_STEP7_ACTIONS_INSTRUCTION}`,
+          `${runningContext}\n\n${conclusions.slice(-2).join("\n\n")}\n\n## Uitkomst deel A\n${parsed7a.step_conclusion}`,
+          adapter,
+          clientMemorySection,
+          signalsSection
         ),
         userMessage: `${baseInstruction}
 
@@ -1320,7 +1877,7 @@ ${stepAvailabilityByStep.get(7)?.promptNote || "Geen extra data-opmerking."}
 ${runningContext}`,
       });
       machineSteps.push(step7b);
-      const parsed7bResult = parseStructuredStepOutput(step7b, parsed7a.step_conclusion, stepAvailabilityByStep.get(7));
+      const parsed7bResult = parseStructuredStepOutput(step7b, parsed7a.step_conclusion, stepAvailabilityByStep.get(7), canonicalMetricMap, liveTermSet);
       const parsed7b = parsed7bResult.parsed;
       if (step5TruthMap.size > 0) {
         parsed7b.findings = applyStep5FindingTruth(parsed7b.findings, step5TruthMap);
@@ -1349,7 +1906,7 @@ ${runningContext}`,
         supabase,
         row: {
           client_id: clientId,
-          sop_type: "monthly",
+          sop_type: adapter.sopTypeKey,
           analysis_date: new Date().toISOString().split("T")[0],
           period_start: periodStart,
           period_end: periodEnd,
@@ -1377,7 +1934,7 @@ ${runningContext}`,
       parsedSteps.push(mergedParsed);
       stepValidations.push(parsed7aResult.validation, parsed7bResult.validation, mergedValidation);
       if (!mergedValidation.valid || mergedValidation.warnings.length > 0) {
-        console.warn("[monthly] Step 7 validation", mergedValidation);
+        logger.warn("[monthly] Step 7 validation", mergedValidation);
       }
       conclusions.push(mergedParsed.step_conclusion);
       return mergedStep;
@@ -1485,7 +2042,7 @@ ${JSON.stringify(keywordData, null, 2)}
         supabase,
         row: {
           client_id: clientId,
-          sop_type: "monthly",
+          sop_type: adapter.sopTypeKey,
           analysis_date: new Date().toISOString().split("T")[0],
           period_start: periodStart,
           period_end: periodEnd,
@@ -1598,7 +2155,7 @@ ${JSON.stringify(creativeData, null, 2)}
         supabase,
         row: {
           client_id: clientId,
-          sop_type: "monthly",
+          sop_type: adapter.sopTypeKey,
           analysis_date: new Date().toISOString().split("T")[0],
           period_start: periodStart,
           period_end: periodEnd,
@@ -1675,7 +2232,7 @@ ${buildStep12AvailabilityInstruction(stepAvailabilityByStep.get(12))}`);
       ...shared,
       stepNumber: 13,
       stepName: "Hypotheses & Sprintplanning",
-      systemPrompt: buildMonthlyStepPrompt(goalsSection, accountType, MONTHLY_V2_STEP_INSTRUCTIONS[13], runningContext),
+      systemPrompt: buildMonthlyStepPrompt(goalsSection, accountType, adapter.stepInstructions[13], runningContext, adapter, clientMemorySection, signalsSection),
       userMessage: `Bouw de synthese voor client "${clientId}" op basis van checkpoint C en alle voorgaande analyse-stappen.
 
 ## Checkpoints
@@ -1688,11 +2245,11 @@ ${conclusions.join("\n\n---\n\n")}`,
     });
     steps.push(conclusion);
     const conclusionPrior = conclusions.at(-1);
-    const { parsed: parsedConclusion, validation: conclusionValidation } = parseStructuredStepOutput(conclusion, conclusionPrior, stepAvailabilityByStep.get(13));
+    const { parsed: parsedConclusion, validation: conclusionValidation } = parseStructuredStepOutput(conclusion, conclusionPrior, stepAvailabilityByStep.get(13), canonicalMetricMap, liveTermSet);
     parsedSteps.push(parsedConclusion);
     stepValidations.push(conclusionValidation);
     if (!conclusionValidation.valid || conclusionValidation.warnings.length > 0) {
-      console.warn("[monthly] Step 13 validation", conclusionValidation);
+      logger.warn("[monthly] Step 13 validation", conclusionValidation);
     }
 
     const analysisDate = new Date().toISOString().split("T")[0];
@@ -1718,7 +2275,7 @@ ${conclusions.join("\n\n---\n\n")}`,
       message: "Step findings clusteren en SOP-coverage borgen...",
     });
     const rawStepFindings = parsedSteps.flatMap((step) => step.findings);
-    const canonical = canonicalizeFindings(rawStepFindings, dimensionAvailability);
+    const canonical = canonicalizeFindings(rawStepFindings, dimensionAvailability, { entityAliases: adapter.entityAliases, metricAliases: adapter.metricAliases, validClusters: adapter.channel === "google_ads" ? undefined : adapter.issueClusters });
     const curatedFindings = curateMonthlyStructuredFindings(canonical.findings);
     const curatedClusters = clusterFindings(curatedFindings);
     const enforcedCoverage = enforceSopCoverage(curatedClusters, dimensionAvailability);
@@ -1730,6 +2287,9 @@ ${conclusions.join("\n\n---\n\n")}`,
     });
     const structured = buildStructuredMonthlyOutput({
       parsedSteps,
+      extraQaRedFlags: goalsTargetsImplausible
+        ? ["Ingestelde of goals-targets lijken niet realistisch geconfigureerd (zie stap 1); target-gap en toon zijn pas te vertrouwen na herijking."]
+        : undefined,
       findings: curatedFindings,
       clusters: curatedClusters,
       coverage: enforcedCoverage.coverage,
@@ -1737,6 +2297,7 @@ ${conclusions.join("\n\n---\n\n")}`,
     });
     const officialStepValidations = stepValidations.filter((validation) => validation.stepNumber >= 1 && validation.stepNumber <= 13);
     const acceptanceReport = validateMonthlyAcceptance({
+      stepCount: adapter.stepCount,
       narrativeSteps: parsedSteps.map((step) => ({
         stepNumber: step.stepNumber,
         stepName: step.stepName,
@@ -1749,6 +2310,7 @@ ${conclusions.join("\n\n---\n\n")}`,
       })),
       recommendations: structured.recommendations,
       tasks: structured.tasks,
+      finalSop: { recommendations: structured.final_sop.recommendations, tasks: structured.final_sop.tasks },
       coverage: structured.coverage,
       findings: curatedFindings,
       checkpointsRun: checkpointSteps.length,
@@ -1786,7 +2348,7 @@ ${conclusions.join("\n\n---\n\n")}`,
       supabase,
       row: {
         client_id: clientId,
-        sop_type: "monthly",
+        sop_type: adapter.sopTypeKey,
         analysis_date: analysisDate,
         period_start: periodStart,
         period_end: periodEnd,
@@ -1818,7 +2380,7 @@ ${conclusions.join("\n\n---\n\n")}`,
         errorMessage: qualityGate.blocking_reasons.join(" | "),
         metadata: {
           analysis_date: analysisDate,
-          sop_type: "monthly",
+          sop_type: adapter.sopTypeKey,
           quality_gate: qualityGate,
           structured_saved: false,
         },
@@ -1870,7 +2432,7 @@ ${conclusions.join("\n\n---\n\n")}`,
       supabase,
       row: {
         client_id: clientId,
-        sop_type: "monthly",
+        sop_type: adapter.sopTypeKey,
         analysis_date: analysisDate,
         period_start: periodStart,
         period_end: periodEnd,
@@ -1907,7 +2469,7 @@ ${conclusions.join("\n\n---\n\n")}`,
       supabase,
       row: {
         client_id: clientId,
-        sop_type: "monthly",
+        sop_type: adapter.sopTypeKey,
         analysis_date: analysisDate,
         period_start: periodStart,
         period_end: periodEnd,
@@ -1996,7 +2558,7 @@ ${conclusions.join("\n\n---\n\n")}`,
         const insightRows = findings.map((finding) => ({
           client_id: clientId,
           analysis_id: analysisId,
-          sop_type: "monthly",
+          sop_type: adapter.sopTypeKey,
           analysis_date: analysisDate,
           insight_type: finding.insight_type,
           title: `[Stap ${finding.step}][${finding.issue_cluster}] ${finding.display_label ?? finding.entity_name}: ${finding.metric}`.slice(0, 80),
@@ -2024,7 +2586,7 @@ ${conclusions.join("\n\n---\n\n")}`,
           client_id: clientId,
           analysis_id: analysisId,
           insight_id: rec.finding_index !== null ? (insightIds[rec.finding_index] ?? null) : null,
-          sop_type: "monthly",
+          sop_type: adapter.sopTypeKey,
           analysis_date: analysisDate,
           hypothesis: rec.hypothesis,
           expected_result: rec.expected_result,
@@ -2070,7 +2632,7 @@ ${conclusions.join("\n\n---\n\n")}`,
         await supabase.from("sop_tasks").insert(taskRows);
         structuredSaved = structuredSaved && true;
       } catch (e) {
-        console.error("Failed to save structured data:", e instanceof Error ? e.message : e);
+        logger.error("Failed to save structured data:", e instanceof Error ? e.message : e);
       }
     }
 
@@ -2082,7 +2644,7 @@ ${conclusions.join("\n\n---\n\n")}`,
       message: "Maandelijkse SOP-analyse gereed.",
       metadata: {
         analysis_date: analysisDate,
-        sop_type: "monthly",
+        sop_type: adapter.sopTypeKey,
         structured_saved: structuredSaved,
         save_receipts: {
           quality_gate_monthly_v2: qualityGateReceipt,

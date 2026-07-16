@@ -10,6 +10,17 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  IS_LOSS_ALARM_PCT,
+  HIGH_CPA_MULTIPLE,
+  MIN_COST_HIGH_CPA,
+  MIN_COST_ZERO_VALUE,
+  SEARCH_WASTE_PCT_POOR,
+  SEARCH_WASTE_PCT_MEDIOCRE,
+  SEARCH_ZERO_CONV_POOR,
+  SEARCH_ZERO_CONV_MEDIOCRE,
+  PMAX_PLACEMENT_MIN_COST,
+} from "../analysis/thresholds";
 import { getTemplateForMode, type AuditMode, type TemplateRow } from "./template";
 import {
   type AuditRowResult,
@@ -483,10 +494,10 @@ const evaluators: Record<number, Evaluator> = {
   12: (ctx) => {
     const isData = ctx.impressionShare;
     if (isData.length === 0) return { score: "Niet beoordeeld", comments: "Geen impression share data beschikbaar.", confidence: "low" };
-    const budgetLost = isData.filter((c) => (c.search_budget_lost_is ?? 0) > 0.2);
-    if (budgetLost.length === 0) return { score: "Goed", comments: "Geen campagnes met >20% IS verlies door budget.", confidence: "high" };
+    const budgetLost = isData.filter((c) => (c.search_budget_lost_is ?? 0) > IS_LOSS_ALARM_PCT / 100);
+    if (budgetLost.length === 0) return { score: "Goed", comments: `Geen campagnes met >${IS_LOSS_ALARM_PCT}% IS verlies door budget.`, confidence: "high" };
     const names = budgetLost.map((c) => c.campaign_name).slice(0, 3).join(", ");
-    return { score: "Onvoldoende", comments: `${budgetLost.length} campagne(s) verliezen >20% IS door budget: ${names}.`, confidence: "high" };
+    return { score: "Onvoldoende", comments: `${budgetLost.length} campagne(s) verliezen >${IS_LOSS_ALARM_PCT}% IS door budget: ${names}.`, confidence: "high" };
   },
 
   // #13: Zoekwoorden logisch + matchtype?
@@ -576,13 +587,13 @@ const evaluators: Record<number, Evaluator> = {
       ? termsWithConv.reduce((s, st) => s + st.cost, 0) / termsWithConv.reduce((s, st) => s + st.conversions, 0)
       : 0;
     const highCpa = avgCpa > 0
-      ? termsWithConv.filter((st) => (st.cost / st.conversions) > avgCpa * 3 && st.cost > 10)
+      ? termsWithConv.filter((st) => (st.cost / st.conversions) > avgCpa * HIGH_CPA_MULTIPLE && st.cost > MIN_COST_HIGH_CPA)
       : [];
     const highCpaCost = highCpa.reduce((s, st) => s + st.cost, 0);
 
     // Tier 3: Terms with clicks but no revenue (for ecommerce — conversions but €0 value)
     const zeroValue = ctx.searchTerms.filter((st) =>
-      st.conversions > 0 && (st.conversions_value ?? 0) === 0 && st.cost > 5
+      st.conversions > 0 && (st.conversions_value ?? 0) === 0 && st.cost > MIN_COST_ZERO_VALUE
     );
 
     const totalWaste = zeroConvCost + highCpaCost;
@@ -593,14 +604,14 @@ const evaluators: Record<number, Evaluator> = {
     const parts: string[] = [];
     parts.push(`${totalTerms} zoektermen geanalyseerd (€${Math.round(totalCost)} totale spend).`);
     if (zeroConv.length > 0) parts.push(`${zeroConv.length} termen zonder conversies (€${Math.round(zeroConvCost)} waste).`);
-    if (highCpa.length > 0) parts.push(`${highCpa.length} termen met CPA >3x gemiddelde (€${Math.round(highCpaCost)} inefficient).`);
+    if (highCpa.length > 0) parts.push(`${highCpa.length} termen met CPA >${HIGH_CPA_MULTIPLE}x gemiddelde (€${Math.round(highCpaCost)} inefficient).`);
     if (zeroValue.length > 0) parts.push(`${zeroValue.length} termen met conversies maar €0 omzet.`);
     if (allWasteful > 0) parts.push(`Totaal: ${wastePercent}% van de spend is waste of inefficient.`);
     const comments = parts.join(" ");
 
     if (allWasteful === 0) return { score: "Goed", comments: `${totalTerms} zoektermen geanalyseerd — geen significante waste gevonden. Negatives zijn goed ingericht.`, confidence: "high" };
-    if (wastePercent > 20 || zeroConv.length > 50) return { score: "Onvoldoende", comments, confidence: "high" };
-    if (wastePercent > 10 || zeroConv.length > 20) return { score: "Voldoende", comments, confidence: "high" };
+    if (wastePercent > SEARCH_WASTE_PCT_POOR || zeroConv.length > SEARCH_ZERO_CONV_POOR) return { score: "Onvoldoende", comments, confidence: "high" };
+    if (wastePercent > SEARCH_WASTE_PCT_MEDIOCRE || zeroConv.length > SEARCH_ZERO_CONV_MEDIOCRE) return { score: "Voldoende", comments, confidence: "high" };
     return { score: "Goed", comments, confidence: "high" };
   },
 
@@ -899,7 +910,7 @@ const evaluators: Record<number, Evaluator> = {
     const pmax = ctx.campaigns.filter((c) => c.campaign_type === "PERFORMANCE_MAX");
     if (pmax.length === 0) return { score: "Niet van toepassing", comments: "Geen PMax campagnes in dit account.", confidence: "high" };
     if (ctx.pmaxPlacements.length === 0) return { score: "Niet beoordeeld", comments: "Geen placement data beschikbaar.", confidence: "low" };
-    const waste = ctx.pmaxPlacements.filter((p) => p.cost > 20 && p.conversions === 0);
+    const waste = ctx.pmaxPlacements.filter((p) => p.cost > PMAX_PLACEMENT_MIN_COST && p.conversions === 0);
     const wasteCost = waste.reduce((s, p) => s + p.cost, 0);
     if (waste.length === 0) return { score: "Goed", comments: `${ctx.pmaxPlacements.length} plaatsingen geanalyseerd, geen significant waste gevonden.`, confidence: "high" };
     if (wasteCost > 100) return { score: "Onvoldoende", comments: `€${Math.round(wasteCost)} verspild op ${waste.length} plaatsing(en) zonder conversies. Top: ${waste.slice(0, 3).map((p) => p.placement).join(", ")}.`, confidence: "high" };

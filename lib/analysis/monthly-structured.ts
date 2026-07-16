@@ -20,7 +20,8 @@ import type {
   Recommendation,
   Task,
 } from "@/lib/schema/analysis-schema";
-import { enforceIceSpread } from "@/lib/analysis/thread-synthesis";
+import { rankRecommendationsByIce } from "@/lib/analysis/thread-synthesis";
+import { dedupeEvidenceLines } from "@/lib/analysis/evidence-dedupe";
 import { sanitizeOutput } from "@/lib/analysis/sanitize";
 import { inferActionDomains, isActionAlignedWithStep } from "@/lib/analysis/step-validator";
 import { MONTHLY_FINAL_SOP_SECTIONS, MONTHLY_OPERATING_DETAIL_SECTIONS } from "@/lib/prompts/sop-prompts";
@@ -53,6 +54,13 @@ export type ActionIntentClass =
 
 export type ActionStrategyMode = "containment" | "recovery" | "validation" | "monitor";
 
+export type ValidationPredicate = {
+  metrics: string[];
+  direction: "daalt" | "stijgt" | "stabiliseert" | "verbetert";
+  window: string;
+  connector?: "en" | "of";
+};
+
 export interface RecommendationStrategyOption {
   mode: ActionStrategyMode;
   action: string;
@@ -62,6 +70,7 @@ export interface RecommendationStrategyOption {
   confidence: Confidence;
   validation_metric?: string;
   validation_condition?: string;
+  validation_predicate?: ValidationPredicate;
   risk_note?: string;
 }
 
@@ -367,7 +376,7 @@ function unique<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
-function normalizeText(value: string): string {
+export function normalizeText(value: string): string {
   return value
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -976,10 +985,21 @@ function createThreads(clusters: IssueCluster[]): {
   const topGroups = orderedGroups
     .filter(({ primary }) => primary.dominant_severity !== "positive")
     .slice(0, 3);
+  // G3 Pad B: twee co-primaire threads als de tweede groep even sterk scoort als de eerste
+  // (zelfde severity-klasse critical of high EN executiveScore binnen 10 procent). Maximaal twee,
+  // dan worden de prioriteiten [1, 1, 2]; nooit een waaier.
+  const topScore = topGroups[0]?.executiveScore ?? 0;
+  const secondScore = topGroups[1]?.executiveScore ?? 0;
+  const coPrimary =
+    topGroups.length >= 2 &&
+    (topGroups[0].primary.dominant_severity === "critical" || topGroups[0].primary.dominant_severity === "high") &&
+    topGroups[0].primary.dominant_severity === topGroups[1].primary.dominant_severity &&
+    Math.abs(topScore - secondScore) <= Math.abs(topScore) * 0.1;
+
   const threads: AnalysisThread[] = topGroups.map(({ group, primary }, index) => ({
     id: `thread_${index + 1}_${primary.cluster_id}`,
     title: threadTitle(primary),
-    priority: (index + 1) as 1 | 2 | 3,
+    priority: (coPrimary ? (index <= 1 ? 1 : 2) : index + 1) as 1 | 2 | 3,
     classification: arbitration.unresolvedClusterIds.has(primary.cluster_id) ? "contextual_shift" : classifyCluster(primary),
     root_cause_summary: dominantRootCause(primary, arbitration.unresolvedClusterIds.has(primary.cluster_id) ? "mixed_evidence" : (arbitration.clusterStates.get(primary.cluster_id) ?? "none")),
     business_impact: unique(group.map((cluster) => businessImpact(cluster))).slice(0, 2).join(" "),
@@ -1005,7 +1025,13 @@ function createThreads(clusters: IssueCluster[]): {
       return classification === "contextual_shift" || classification === "false_positive_alert" || classification === "expected_tradeoff";
     })
     .slice(0, 3)
-    .map((cluster) => `${cluster.display_label}: ${cluster.evidence_summary}`);
+    .map((cluster) =>
+      // G3 Pad A: een afgewezen cluster met materiele business-impact (een echt issue dat wordt
+      // gedeprioriteerd) eerlijk als secundaire kans waarderen, niet als kale niet-probleem-regel.
+      cluster.action_required && (cluster.dominant_severity === "critical" || cluster.dominant_severity === "high")
+        ? `${businessImpact(cluster)} Secundair en geen acuut probleem, maar een gemiste kans die volgende maand aandacht verdient, geen non-issue.`
+        : `${cluster.display_label}: ${cluster.evidence_summary}`
+    );
 
   if (notProblem.length === 0) {
     const fallbackNotProblem = ranked
@@ -1624,6 +1650,7 @@ function safePresentationText(value: unknown): string {
     return "Interne structured data verborgen.";
   }
   return text
+    .replace(/[—–]/g, " - ")
     .replace(/\s+/g, " ")
     .replace(/\s*;\s*/g, "; ")
     .trim();
@@ -2080,13 +2107,23 @@ function buildSuccessScenario(
   recommendations: ThreadRecommendation[]
 ): SuccessScenario {
   const primary = threads[0];
+  // 4c: de threadtitel staat mid-zin en bevat entiteitsnamen (UK-MPC, Apple); die
+  // behouden hun originele casing. Niet langer .toLowerCase() over de hele titel.
+  const floorScenario = primary
+    ? `De maand is beter als ${primary.monitoring_metrics.slice(0, 2).join(" en ")} stabiliseren zonder nieuwe escalatie in ${primary.title}.`
+    : "De maand is beter als de belangrijkste efficiëntiesignalen stabiliseren.";
+  let targetScenario = primary
+    ? `Doelscenario: de primaire thread beweegt aantoonbaar richting herstel en minimaal twee ondersteunende threads blijven onder controle.`
+    : "Doelscenario: rendement en volume bewegen tegelijk de goede kant op.";
+  // 4c: floor en target mogen niet letterlijk samenvallen; valt dat samen, herschrijf
+  // target met een scale-metric zodat de twee scenario's onderscheidend blijven.
+  if (normalizeText(floorScenario) === normalizeText(targetScenario)) {
+    const scaleMetric = primary?.monitoring_metrics?.[0] ?? "ROAS";
+    targetScenario = `Doelscenario: ${scaleMetric} en volume bewegen aantoonbaar de goede kant op terwijl de ondersteunende threads onder controle blijven.`;
+  }
   return {
-    floor_scenario: primary
-      ? `De maand is beter als ${primary.monitoring_metrics.slice(0, 2).join(" en ")} stabiliseren zonder nieuwe escalatie in ${primary.title.toLowerCase()}.`
-      : "De maand is beter als de belangrijkste efficiëntiesignalen stabiliseren.",
-    target_scenario: primary
-      ? `Doelscenario: de primaire thread beweegt aantoonbaar richting herstel en minimaal twee ondersteunende threads blijven onder controle.`
-      : "Doelscenario: rendement en volume bewegen tegelijk de goede kant op.",
+    floor_scenario: floorScenario,
+    target_scenario: targetScenario,
     biggest_risk: recommendations.some((recommendation) => recommendation.action_intent_class === "tracking_validation")
       ? "Meetproblemen blijven onopgelost waardoor optimalisaties op verkeerde signalen worden gebaseerd."
       : "Te veel parallelle optimalisaties zonder duidelijke prioriteit vertroebelen het echte effect.",
@@ -2280,6 +2317,7 @@ function buildFallbackStrategy(
           confidence,
           validation_metric: validationMetric,
           validation_condition: `Bevestig binnen 1-2 weken dat ${cluster.canonical_metric} en spend share in ${entity} niet verder verslechteren.`,
+          validation_predicate: { metrics: [cluster.canonical_metric, "spend share"], direction: "stabiliseert", window: "1-2 weken" },
           risk_note: `Te brede geo-reductie kan winstgevende pockets binnen ${entity} ook afknijpen.`,
         };
       }
@@ -2293,6 +2331,7 @@ function buildFallbackStrategy(
           confidence: confidence === "high" ? "medium" : confidence,
           validation_metric: validationMetric,
           validation_condition: `Schaal alleen door als ${cluster.canonical_metric} en conversiedichtheid in ${entity} binnen 2-4 weken aantoonbaar verbeteren zonder spend-escalatie.`,
+          validation_predicate: { metrics: [cluster.canonical_metric, "conversiedichtheid"], direction: "verbetert", window: "2-4 weken" },
           risk_note: `Pricing, LP of marktfit kunnen herstel beperken ondanks een betere campagne-opzet.`,
         };
       }
@@ -2309,6 +2348,7 @@ function buildFallbackStrategy(
           confidence,
           validation_metric: validationMetric,
           validation_condition: `Bevestig dat ${cluster.canonical_metric} en CPA op de overblijvende inventory binnen 1-2 weken verbeteren.`,
+          validation_predicate: { metrics: [cluster.canonical_metric, "CPA"], direction: "verbetert", window: "1-2 weken" },
           risk_note: "Te brede netwerkbeperking kan ook nuttig aanvullend bereik wegsnijden.",
         };
       }
@@ -2322,6 +2362,7 @@ function buildFallbackStrategy(
           confidence: confidence === "high" ? "medium" : confidence,
           validation_metric: validationMetric,
           validation_condition: `Doorzetten alleen als ${cluster.canonical_metric}, CVR of CPA in de testset aantoonbaar beter zijn dan in de hoofdset.`,
+          validation_predicate: { metrics: [cluster.canonical_metric, "CVR", "CPA"], direction: "verbetert", window: "2-4 weken", connector: "of" },
           risk_note: "Extra netwerk-tests kunnen tijdelijk learning reset of extra spend vragen.",
         };
       }
@@ -2337,6 +2378,7 @@ function buildFallbackStrategy(
           confidence,
           validation_metric: "Wasteful Spend",
           validation_condition: "Behoud de uitsluiting alleen als waste spend daalt zonder terugval in relevante conversies.",
+          validation_predicate: { metrics: ["Wasteful Spend"], direction: "daalt", window: "7 dagen" },
           risk_note: "Te grove negatives kunnen ook rendabele queryvarianten blokkeren.",
         };
       }
@@ -2350,6 +2392,7 @@ function buildFallbackStrategy(
           confidence: confidence === "high" ? "medium" : confidence,
           validation_metric: "CVR, ROAS",
           validation_condition: "Recovery slaagt alleen als CVR of ROAS verbetert zonder dat waste spend opnieuw oploopt.",
+          validation_predicate: { metrics: ["CVR", "ROAS"], direction: "verbetert", window: "2-4 weken", connector: "of" },
           risk_note: "Routing- of LP-fixes kunnen zonder voldoende zoekvolume onduidelijk blijven.",
         };
       }
@@ -2366,6 +2409,7 @@ function buildFallbackStrategy(
           confidence,
           validation_metric: validationMetric,
           validation_condition: `Bevestig dat spend-lekkage en blended ${cluster.canonical_metric} binnen 1-2 weken verbeteren.`,
+          validation_predicate: { metrics: [cluster.canonical_metric], direction: "verbetert", window: "1-2 weken" },
           risk_note: "Containment kan ook toekomstige winnaars of leerdata tijdelijk afknijpen.",
         };
       }
@@ -2379,6 +2423,7 @@ function buildFallbackStrategy(
           confidence: confidence === "high" ? "medium" : confidence,
           validation_metric: "ROAS, Conversies",
           validation_condition: "Herstel is pas geloofwaardig als ROAS of conversies in de afgescheiden productset aantoonbaar verbeteren.",
+          validation_predicate: { metrics: ["ROAS", "Conversies"], direction: "verbetert", window: "2-6 weken", connector: "of" },
           risk_note: "Feed- of ownership-aanpassingen vragen vaak extra implementatietijd en beïnvloeden learning.",
         };
       }
@@ -2397,6 +2442,7 @@ function buildFallbackStrategy(
           confidence,
           validation_metric: validationMetric,
           validation_condition: `Bevestig dat ${cluster.canonical_metric} in het zwakke segment binnen 1-2 weken normaliseert.`,
+          validation_predicate: { metrics: [cluster.canonical_metric], direction: "stabiliseert", window: "1-2 weken" },
           risk_note: "Te agressieve afknijping kan conversievolume sneller drukken dan verwacht.",
         };
       }
@@ -2410,11 +2456,13 @@ function buildFallbackStrategy(
           confidence: confidence === "high" ? "medium" : confidence,
           validation_metric: validationMetric,
           validation_condition: `Doorzetten alleen als ${cluster.canonical_metric} of CVR in de testopzet verbetert zonder efficiencyverslechtering elders.`,
+          validation_predicate: { metrics: [cluster.canonical_metric, "CVR"], direction: "verbetert", window: "2-4 weken", connector: "of" },
           risk_note: "Segmenttests kunnen tijdelijk moeilijk interpreteerbaar zijn bij laag volume.",
         };
       }
       break;
     case "tracking_cvr_drop":
+      if (mode !== "validation") break;
       return {
         mode: "validation",
         action: `Valideer tracking en conversiemeting voor ${entity} voordat bied- of budgetwijzigingen live gaan`,
@@ -2424,9 +2472,11 @@ function buildFallbackStrategy(
         confidence: confidence === "low" ? "medium" : confidence,
         validation_metric: "CVR, Conversies",
         validation_condition: "Pas verdere optimalisaties toe nadat tracking, conversie-acties en dashboarddata weer op elkaar aansluiten.",
+        validation_predicate: { metrics: ["tracking", "conversie-acties", "dashboarddata"], direction: "stabiliseert", window: "deze week" },
         risk_note: "Zonder valide meting blijven latere conclusies potentieel misleidend.",
       };
     case "search_budget_cap":
+      if (mode !== "recovery") break;
       return {
         mode: "recovery",
         action: `Vergroot het budgetvenster van ${entity} alleen op uren, zoekthema's of campagnes waar vraag aantoonbaar rendabel blijft`,
@@ -2436,6 +2486,7 @@ function buildFallbackStrategy(
         confidence: confidence === "low" ? "medium" : confidence,
         validation_metric: "Search Lost IS (Budget), ROAS, Conversies",
         validation_condition: "Extra budget is alleen verdedigbaar als Search Lost IS (Budget) daalt en volume groeit binnen rendabele KPI-grenzen.",
+        validation_predicate: { metrics: ["Search Lost IS (Budget)"], direction: "daalt", window: "1-2 weken" },
         risk_note: "Volume push zonder kwaliteitsfilter kan de onderliggende efficiency verder uithollen.",
       };
     default:
@@ -2449,6 +2500,7 @@ function buildFallbackStrategy(
           confidence,
           validation_metric: validationMetric,
           validation_condition: `Bevestig binnen ${mode === "containment" ? "1-2 weken" : "2-4 weken"} dat ${cluster.canonical_metric} niet verder verslechtert.`,
+          validation_predicate: { metrics: [cluster.canonical_metric], direction: "stabiliseert", window: mode === "containment" ? "1-2 weken" : "2-4 weken" },
           risk_note: "Containment kan neveneffecten hebben op volume of learning.",
         };
       }
@@ -2462,6 +2514,7 @@ function buildFallbackStrategy(
           confidence: confidence === "high" ? "medium" : confidence,
           validation_metric: validationMetric,
           validation_condition: `Recovery pas doorzetten als ${cluster.canonical_metric} aantoonbaar verbetert binnen de testhorizon.`,
+          validation_predicate: { metrics: [cluster.canonical_metric], direction: "verbetert", window: "2-4 weken" },
           risk_note: "Herstelroutes vragen vaak extra tijd en kunnen zonder volume weinig signaal opleveren.",
         };
       }
@@ -2484,6 +2537,7 @@ function buildWeakEvidenceValidationStrategy(
     confidence: confidence === "high" ? "medium" : confidence,
     validation_metric: cluster.canonical_metric,
     validation_condition: `Ga pas door met containment of recovery als ${cluster.canonical_metric} in de testopzet aantoonbaar dezelfde richting uitwijst.`,
+    validation_predicate: { metrics: [cluster.canonical_metric], direction: "verbetert", window: "deze week" },
     risk_note: "Zonder validation gate kan een destructieve ingreep te vroeg op onvolledig bewijs worden gebaseerd.",
   };
 }
@@ -2884,7 +2938,7 @@ function buildRecommendationsFromStepActions(
     } satisfies ThreadRecommendation;
   });
 
-  return enforceIceSpread(promoted).sort((a, b) => b.ice_total - a.ice_total);
+  return rankRecommendationsByIce(promoted);
 }
 
 function buildTasksFromRecommendations(recommendations: ThreadRecommendation[]): ThreadTask[] {
@@ -2929,11 +2983,14 @@ function buildTasksFromRecommendations(recommendations: ThreadRecommendation[]):
       const validationMetric = strategy.validation_metric || recommendation.measurement_metric;
       const validationCondition = strategy.validation_condition || `Valideer binnen ${strategy.timeframe} of ${validationMetric} verbetert.`;
       const riskNote = strategy.risk_note ? ` Risico: ${strategy.risk_note}` : "";
+      const conditionClause = strategy.validation_predicate
+        ? renderPredicate(strategy.validation_predicate)
+        : sanitizeDecisionCondition(validationCondition, validationMetric);
       const stopContinueRule = strategy.mode === "validation"
-        ? `Ga alleen door met containment of recovery als ${validationCondition.toLowerCase()}`
+        ? `Ga alleen door met containment of recovery als ${conditionClause}`
         : strategy.mode === "containment"
           ? `Stop deze route als ${validationMetric} niet verbetert; vervolg dan alleen na aanvullende validatie.`
-          : `Continueer alleen als ${validationCondition.toLowerCase()}; stop of schaal af als de metric uitblijft.`;
+          : `Continueer alleen als ${conditionClause}; stop of schaal af als de metric uitblijft.`;
       const objectOfChange = recommendation.canonical_entity_name || recommendation.primary_entity_key;
       const description = `Handeling: ${strategy.action}. Object: ${objectOfChange}. Meet via ${validationMetric} binnen ${strategy.timeframe}. Voorwaarde: ${validationCondition}. Beslisregel: ${stopContinueRule}.${riskNote}`;
       const task: ThreadTask = {
@@ -3130,6 +3187,24 @@ function mapStrategyModeToFinalRoute(mode: ActionStrategyMode): FinalSopRoute {
   return "controlled scale";
 }
 
+function renderPredicate(predicate: ValidationPredicate): string {
+  const verbs: Record<ValidationPredicate["direction"], [string, string]> = {
+    verbetert: ["verbetert", "verbeteren"],
+    daalt: ["daalt", "dalen"],
+    stijgt: ["stijgt", "stijgen"],
+    stabiliseert: ["stabiliseert", "stabiliseren"],
+  };
+  const plural = predicate.metrics.length > 1;
+  const verb = verbs[predicate.direction][plural ? 1 : 0];
+  const connector = predicate.connector ?? "en";
+  const metricsText = predicate.metrics.length <= 1
+    ? (predicate.metrics[0] ?? "")
+    : predicate.metrics.length === 2
+      ? `${predicate.metrics[0]} ${connector} ${predicate.metrics[1]}`
+      : `${predicate.metrics.slice(0, -1).join(", ")} ${connector} ${predicate.metrics[predicate.metrics.length - 1]}`;
+  return `${metricsText} ${verb} binnen ${predicate.window}`;
+}
+
 function sanitizeDecisionCondition(condition: string, metric: string): string {
   const fallback = `valideer binnen de sprint of ${metric} verbetert`;
   const stripped = safePresentationText(condition || fallback)
@@ -3149,9 +3224,12 @@ function decisionRuleForRoute(
   route: FinalSopRoute,
   metric: string,
   condition: string,
-  evidence: EvidenceLevel
+  evidence: EvidenceLevel,
+  predicate?: ValidationPredicate
 ): string {
-  const normalizedCondition = sanitizeDecisionCondition(condition, metric);
+  // 4e: render deterministisch uit het gestructureerde predicaat; val alleen bij afwezigheid
+  // terug op de legacy prozasanering. Zo raakt de beslisregel nooit een directief-prefix.
+  const normalizedCondition = predicate ? renderPredicate(predicate) : sanitizeDecisionCondition(condition, metric);
   switch (route) {
     case "validation":
       return `Ga alleen door naar containment of recovery als ${normalizedCondition}; stop escalatie als de validatie de hoofdverklaring niet bevestigt.`;
@@ -3194,9 +3272,9 @@ function buildFinalRecommendationFromStrategy(
     doel: safePresentationText(strategy.expected_result || recommendation.expected_result),
     meet_via: metric,
     voorwaarde: condition,
-    beslisregel: decisionRuleForRoute(route, metric, condition, strategy.evidence_level),
+    beslisregel: decisionRuleForRoute(route, metric, condition, strategy.evidence_level, strategy.validation_predicate),
     risico: safePresentationText(strategy.risk_note || routeRiskFallback(route)),
-    alternative_route: alternatives.length > 0
+    alternative_route: alternatives.length > 0 && normalizeText(alternatives[0].action) !== normalizeText(strategy.action)
       ? `${finalRecommendationRouteLabel(mapStrategyModeToFinalRoute(alternatives[0].mode))}: ${safePresentationText(alternatives[0].action)}`
       : undefined,
   };
@@ -3262,6 +3340,7 @@ function inferControlledScaleStrategy(
     confidence: confidence === "high" ? "medium" : confidence,
     validation_metric: primary.canonical_metric,
     validation_condition: `${primary.canonical_metric} blijft stabiel of verbetert gedurende minimaal 7 dagen vóór extra schaal.`,
+    validation_predicate: { metrics: [primary.canonical_metric], direction: "stabiliseert", window: "7 dagen" },
     risk_note: "Opschalen vóór herstel vergroot vooral het bestaande lek.",
   };
 }
@@ -3287,6 +3366,7 @@ function syntheticRouteFallback(
       confidence: confidence === "low" ? "medium" : confidence,
       validation_metric: primary.canonical_metric,
       validation_condition: `${primary.canonical_metric} verslechtert niet verder nadat de tijdelijke rem is geplaatst.`,
+      validation_predicate: { metrics: [primary.canonical_metric], direction: "stabiliseert", window: "1-2 weken" },
       risk_note: "Te brede bevriezing kan ook gezond volume vertragen.",
     };
   }
@@ -3300,6 +3380,7 @@ function syntheticRouteFallback(
       confidence: confidence === "high" ? "medium" : confidence,
       validation_metric: primary.canonical_metric,
       validation_condition: `${primary.canonical_metric} verbetert aantoonbaar in de hersteltest zonder nieuwe efficiencyval.`,
+      validation_predicate: { metrics: [primary.canonical_metric], direction: "verbetert", window: "2-4 weken" },
       risk_note: "Te vroege herstart kan dezelfde fout opnieuw vergroten.",
     };
   }
@@ -3331,7 +3412,7 @@ function applyExecutiveRecommendationDependencies(items: FinalSopRecommendation[
   const containment = items.find((item) => item.route === "containment");
   const recovery = items.find((item) => item.route === "recovery");
   return items.map((item) => {
-    if (item.route === "recovery" && containment && !/containment|stabiliseer|stabiliseert/i.test(item.voorwaarde)) {
+    if (item.route === "recovery" && containment && normalizeText(item.handeling) !== normalizeText(containment.handeling) && !/containment|stabiliseer|stabiliseert/i.test(item.voorwaarde)) {
       return {
         ...item,
         voorwaarde: `Start pas nadat containment ${containment.meet_via} minimaal 7 dagen stabiliseert.`,
@@ -3621,6 +3702,16 @@ function hasMalformedDecisionRule(text: string): boolean {
   return /Continueer alleen als doorzetten alleen als|doorzetten alleen als doorzetten alleen als|ga alleen door [^.\n]*ga pas door/i.test(text);
 }
 
+// 4g: generieke grammatica-guard voor een dubbele conditie binnen een clause. Vangt
+// de bredere set die hasMalformedDecisionRule (drie specifieke frasen) mist, zoals
+// "Continueer alleen als behoud de uitsluiting alleen als ...". Clause-begrensd op
+// [^.;] zodat twee legitieme clauses ("... alleen als X; schaal alleen als Y") geen vals
+// alarm geven. Gebruikt in de eerlijke QA-scoring, niet als harde poort.
+export function hasDoubleConditional(text: string): boolean {
+  return / als [^.;]{3,60} alleen [^.;]{3,60} als /i.test(text)
+    || /\balleen als\b[^.;]*\balleen als\b/i.test(text);
+}
+
 function scoreFinalWhy(primaryThread: string, primaryCluster: IssueCluster | null, supportingEvidence: string[]): number {
   let score = 9.2;
   if (!primaryCluster) score -= 0.8;
@@ -3638,8 +3729,39 @@ function scoreFinalActionability(recommendations: FinalSopRecommendation[], task
   if (tasks.length < 4) score -= 0.6;
   if (recommendations.some((item) => hasMalformedDecisionRule(item.beslisregel))) score -= 0.8;
   if (tasks.some((item) => hasMalformedDecisionRule(item.beslisregel))) score -= 0.8;
+  // 4g: 1.0 aftrek per beslisregel waar de dubbele-conditie-guard vuurt (bredere dekking
+  // dan de drie specifieke frasen hierboven; maakt de score eerlijk over alle doublings).
+  const doubleConditionalHits =
+    recommendations.filter((item) => hasDoubleConditional(item.beslisregel)).length +
+    tasks.filter((item) => hasDoubleConditional(item.beslisregel)).length;
+  score -= doubleConditionalHits * 1.0;
   if (tasks.some(hasPlaceholderTask)) score -= 1.0;
   return Math.max(0, Math.min(10, Number(score.toFixed(1))));
+}
+
+function groundedNumbersFromCluster(cluster: IssueCluster | null): number[] {
+  if (!cluster) return [];
+  const numbers: number[] = [];
+  for (const finding of cluster.findings) {
+    if (typeof finding.current_value === "number") numbers.push(finding.current_value);
+    if (typeof finding.previous_value === "number") numbers.push(finding.previous_value);
+    if (typeof finding.change_pct === "number") numbers.push(Math.abs(finding.change_pct));
+  }
+  return numbers;
+}
+
+function containsUngroundedNumber(text: string, allowedNumbers: number[]): boolean {
+  // Vuurt als de tekst een percentage of eurobedrag bevat dat niet herleidbaar is tot de
+  // echte finding-data. Alleen percentages en euro's tellen; vensters als "1-2 weken" niet.
+  const allowed = new Set(allowedNumbers.map((value) => Math.round(value)));
+  const found: number[] = [];
+  for (const match of text.matchAll(/(\d+(?:[.,]\d+)?)\s*(?:%|procent)/gi)) {
+    found.push(Math.round(parseFloat(match[1].replace(",", "."))));
+  }
+  for (const match of text.matchAll(/(?:€|EUR)\s*(\d+(?:[.,]\d+)?)/gi)) {
+    found.push(Math.round(parseFloat(match[1].replace(",", "."))));
+  }
+  return found.some((value) => !Number.isNaN(value) && !allowed.has(value));
 }
 
 function buildFinalQa(
@@ -3661,8 +3783,17 @@ function buildFinalQa(
   const redFlags = unique([
     ...(notProblem.length === 0 ? ["Geen expliciete schone positives beschikbaar om false alternatives te sluiten."] : []),
     ...(primaryCluster && evidenceRank(evidenceFromCluster(primaryCluster)) <= 2 ? ["Primaire verklaring leunt deels op inferred of hypothesis evidence."] : []),
+    ...((recommendations.some((item) => hasDoubleConditional(item.beslisregel)) || tasks.some((item) => hasDoubleConditional(item.beslisregel))) ? ["Beslisregel bevat dubbele conditie"] : []),
+    ...((() => {
+      const allowed = groundedNumbersFromCluster(primaryCluster);
+      return recommendations.some((item) =>
+        containsUngroundedNumber(item.doel, allowed)
+        || containsUngroundedNumber(item.voorwaarde, allowed)
+        || containsUngroundedNumber(item.risico, allowed)
+      );
+    })() ? ["Finale laag bevat een niet-herleidbaar getal"] : []),
     ...validationErrors.slice(0, 3),
-  ]).slice(0, 3);
+  ]).slice(0, 4);
   return {
     chosen_primary_thread: safePresentationText(primaryThread?.title || "Geen primaire thread beschikbaar."),
     rejected_alternative_threads: threads.slice(1, 3).map((thread) => safePresentationText(thread.title)),
@@ -3758,14 +3889,14 @@ function buildOperatingEvidenceTraceEntries(
     cluster_id: cluster.cluster_id,
     heading: safePresentationText(cluster.display_label),
     why_it_matters: safePresentationText(cluster.root_cause_summary),
-    evidence_lines: unique([
+    evidence_lines: dedupeEvidenceLines([
       buildSupportingEvidenceBullet(cluster),
       ...cluster.findings.slice(0, 2).map((finding) =>
         safePresentationText(
           `${finding.display_label} — ${titleCaseMetric(finding.canonical_metric)}${finding.current_value != null ? ` ${formatMetricValue(finding.current_value, finding.canonical_metric)}` : ""}${finding.change_pct != null ? ` (${finding.change_pct > 0 ? "+" : ""}${finding.change_pct}%)` : ""}. ${finding.cause || cluster.root_cause_summary}`
         )
       ),
-    ]).slice(0, 3),
+    ]),
     source_steps: collectClusterSourceSteps(cluster),
   }));
 }
@@ -3869,7 +4000,7 @@ function buildHypothesisProofEntries(opts: {
     opts.clusters.flatMap((cluster) => cluster.related_finding_ids ?? [])
   ).slice(0, 6);
 
-  return opts.finalSop.recommendations.slice(0, 3).map((recommendation, index) => {
+  const hypothesisEntries: OperatingHypothesisTrace[] = opts.finalSop.recommendations.slice(0, 3).map((recommendation, index) => {
     const trace = opts.routeTaskMap.find((entry) => entry.recommendation_number === index + 1);
     const routeEvidenceFindingIds = unique(
       opts.evidenceTrace
@@ -3889,16 +4020,31 @@ function buildHypothesisProofEntries(opts: {
         : `Volgende maand willen we zien dat ${recommendation.meet_via} stabiel blijft zonder nieuwe escalatie op ${recommendation.object}.`;
     const objectLabel = formatObjectLabel(recommendation.object);
     const successMetrics = uniqueMetricList(normalizeMetrics(recommendation.meet_via), ["ROAS", "Conversies"]);
-    const guardrailMetrics = uniqueMetricList(
+    // 4b: guardrails moeten disjunct zijn van de success-metrics, anders worden de
+    // accept/reject-criteria circulair (dezelfde metric bepaalt slagen en falen). Filter
+    // de overlap eruit; valt de set leeg, kies het route-specifieke complement (ook disjunct).
+    const rawGuardrails =
       recommendation.route === "controlled scale"
         ? ["ROAS", "CPA"]
         : recommendation.route === "containment"
           ? ["ROAS", "Conversies"]
           : recommendation.route === "recovery"
             ? ["ROAS", "CPA"]
-            : successMetrics.slice(0, 2),
-      successMetrics.slice(0, 2)
-    );
+            : successMetrics.slice(0, 2);
+    const successKeys = new Set(successMetrics.map((metric) => metric.toLowerCase()));
+    let guardrailMetrics = unique(rawGuardrails.filter((metric) => !successKeys.has(metric.toLowerCase())));
+    if (guardrailMetrics.length === 0) {
+      const complement =
+        recommendation.route === "containment"
+          ? ["CPA", "CVR"]
+          : recommendation.route === "recovery"
+            ? ["CPC", "Spend"]
+            : recommendation.route === "controlled scale"
+              ? ["CVR", "Spend"]
+              : ["CPA", "Spend"];
+      guardrailMetrics = unique(complement.filter((metric) => !successKeys.has(metric.toLowerCase())));
+    }
+    guardrailMetrics = guardrailMetrics.slice(0, 2);
     const evaluationWindow = routeWindow(recommendation.route);
     const expectedChange =
       recommendation.route === "validation"
@@ -3958,6 +4104,16 @@ function buildHypothesisProofEntries(opts: {
       rejected_reason: null,
       accepted_into_sprint: false,
     };
+  });
+
+  // 4b: dedupe op genormaliseerde interventie; vul NIET aan tot drie als er minder unieke
+  // routes zijn. Twee identieke aanbevelingen mogen niet twee identieke hypotheses geven.
+  const seenInterventions = new Set<string>();
+  return hypothesisEntries.filter((entry) => {
+    const key = `${entry.route}::${normalizeText(entry.validation_or_exploitation_step)}`;
+    if (seenInterventions.has(key)) return false;
+    seenInterventions.add(key);
+    return true;
   });
 }
 
@@ -4062,7 +4218,11 @@ function buildOperatingDetailLayer(opts: {
     return {
       recommendation_number: index + 1,
       route: recommendation.route,
-      recommendation_summary: safePresentationText(`${recommendation.handeling} ${recommendation.object}`),
+      recommendation_summary: safePresentationText(
+        normalizeText(recommendation.handeling).includes(normalizeText(recommendation.object))
+          ? recommendation.handeling
+          : `${recommendation.handeling} ${recommendation.object}`
+      ),
       rationale: safePresentationText(`${recommendation.doel} Beslisregel: ${recommendation.beslisregel}`),
       supporting_evidence: supportingEvidence,
       source_steps: sourceSteps,
@@ -4084,7 +4244,11 @@ function buildOperatingDetailLayer(opts: {
     return {
       task_number: index + 1,
       linked_recommendation: task.linked_recommendation,
-      task_summary: safePresentationText(`${task.handeling} ${task.object}`),
+      task_summary: safePresentationText(
+        normalizeText(task.handeling).includes(normalizeText(task.object))
+          ? task.handeling
+          : `${task.handeling} ${task.object}`
+      ),
       execution_detail: safePresentationText(`Meet via ${task.meet_via}. Voorwaarde: ${task.voorwaarde} Beslisregel: ${task.beslisregel}`),
       supporting_rationale: safePresentationText(
         `${linkedRecommendation?.route ? `Route ${linkedRecommendation.route}: ` : ""}${linkedRecommendation?.doel || routeTrace?.rationale || "Geen aanvullende rationale beschikbaar."}`
@@ -4284,8 +4448,20 @@ export function validateFinalSopSynthesis(finalSop: FinalSopSynthesis): string[]
   if (finalSop.what_is_not_the_problem.length > 2) errors.push("What is NOT the problem exceeds two bullets");
   if (finalSop.recommendations.length < 3 || finalSop.recommendations.length > 4) errors.push("Recommendations count invalid");
   if (finalSop.tasks.length < MIN_FINAL_TASKS || finalSop.tasks.length > MAX_FINAL_TASKS) errors.push("Tasks count invalid");
-  if (finalSop.qa_self_check.why_score_estimate < 8.5) errors.push("Why-score below threshold");
-  if (finalSop.qa_self_check.actionability_score_estimate < 8.5) errors.push("Actionability-score below threshold");
+  // The QA self-scores are diagnostic, not structural gates. They are reported
+  // honestly: the 8.5 floor was removed, and scoreFinalWhy now receives the real
+  // primary cluster at the revision call site (no longer null), so the why-score
+  // reflects actual cluster quality and evidence instead of being pinned at 8.4.
+  // Because the self-scores no longer block, real defects are validated
+  // structurally instead. A malformed decision rule is an objective defect that
+  // was previously only reflected in the (floored, hidden) self-score, so we gate
+  // on it here directly, alongside the placeholder-task check further below.
+  if (
+    finalSop.recommendations.some((item) => hasMalformedDecisionRule(item.beslisregel)) ||
+    finalSop.tasks.some((item) => hasMalformedDecisionRule(item.beslisregel))
+  ) {
+    errors.push("Malformed decision rule present");
+  }
   finalSop.recommendations.forEach((recommendation, index) => {
     if (!["validation", "containment", "recovery", "controlled scale"].includes(recommendation.route)) {
       errors.push(`Recommendation ${index + 1} has invalid route`);
@@ -4327,7 +4503,7 @@ export function validateFinalSopSynthesis(finalSop: FinalSopSynthesis): string[]
   return errors;
 }
 
-function reviseFinalSopSynthesis(finalSop: FinalSopSynthesis): FinalSopSynthesis {
+function reviseFinalSopSynthesis(finalSop: FinalSopSynthesis, primaryCluster: IssueCluster | null): FinalSopSynthesis {
   const revisedRecommendations = finalSop.recommendations
     .slice(0, MAX_FINAL_RECOMMENDATIONS)
     .map((recommendation) => ({
@@ -4387,8 +4563,8 @@ function reviseFinalSopSynthesis(finalSop: FinalSopSynthesis): FinalSopSynthesis
   revised.markdown = renderFinalSopMarkdown(revised);
   revised.qa_self_check = {
     ...revised.qa_self_check,
-    why_score_estimate: Math.max(8.5, scoreFinalWhy(revised.primary_thread, null, revised.supporting_evidence)),
-    actionability_score_estimate: Math.max(8.5, scoreFinalActionability(revised.recommendations, revised.tasks)),
+    why_score_estimate: scoreFinalWhy(revised.primary_thread, primaryCluster, revised.supporting_evidence),
+    actionability_score_estimate: scoreFinalActionability(revised.recommendations, revised.tasks),
   };
   revised.markdown = renderFinalSopMarkdown(revised);
   return revised;
@@ -4466,7 +4642,7 @@ function buildFinalSopSynthesis(opts: {
   finalSop.markdown = renderFinalSopMarkdown(finalSop);
   const firstPassErrors = validateFinalSopSynthesis(finalSop);
   if (firstPassErrors.length === 0) return finalSop;
-  const revised = reviseFinalSopSynthesis(finalSop);
+  const revised = reviseFinalSopSynthesis(finalSop, primaryCluster);
   const secondPassErrors = validateFinalSopSynthesis(revised);
   if (secondPassErrors.length > 0) {
     throw new Error(`Final SOP quality gate failed: ${secondPassErrors.join("; ")}`);
@@ -4606,6 +4782,8 @@ export function buildStructuredMonthlyOutput(opts: {
   clusters: IssueCluster[];
   coverage: SopCoverage[];
   conclusionText: string;
+  /** W1.1d: extra red flags die de QA self-check vooraan toont (zoals de target-plausibiliteitsflag). */
+  extraQaRedFlags?: string[];
 }): MonthlyStructuredOutput {
   const { parsedSteps, findings, clusters, coverage, conclusionText } = opts;
   const displaySidecars = buildDisplayFindings(parsedSteps);
@@ -4637,7 +4815,7 @@ export function buildStructuredMonthlyOutput(opts: {
     recommendationsAlignWithThreads(resolved.recommendations, threads),
     arbitration
   );
-  const spreadResolvedRecommendations = enforceIceSpread(contradictionAdjustedRecommendations).slice(0, MAX_RECOMMENDATIONS);
+  const spreadResolvedRecommendations = rankRecommendationsByIce(contradictionAdjustedRecommendations).slice(0, MAX_RECOMMENDATIONS);
   const resolvedTasks = buildTasksFromRecommendations(spreadResolvedRecommendations);
   const safeNotProblem = executiveSafeNotProblem(displayFindings, threads);
   const consistencyCounts = computeStructuredConsistencyCounts(displayFindings, spreadResolvedRecommendations, resolvedTasks);
@@ -4648,6 +4826,15 @@ export function buildStructuredMonthlyOutput(opts: {
     recommendations: spreadResolvedRecommendations,
     notProblem: safeNotProblem,
   });
+
+  // W1.1d: extra QA-red-flags (zoals de target-plausibiliteitsflag) vooraan mergen,
+  // zodat de self-check ze expliciet toont. Zonder extra flags byte-identiek.
+  if (opts.extraQaRedFlags && opts.extraQaRedFlags.length > 0) {
+    finalSop.qa_self_check.red_flags_remaining = unique([
+      ...opts.extraQaRedFlags,
+      ...finalSop.qa_self_check.red_flags_remaining,
+    ]);
+  }
   const success = buildSuccessScenario(threads, spreadResolvedRecommendations);
   const coverageMarkdown = buildCoverageMarkdown(coverage, displaySidecars);
   const appendixMarkdown = buildAppendixMarkdown(displaySidecars);

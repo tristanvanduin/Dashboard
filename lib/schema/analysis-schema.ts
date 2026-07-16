@@ -81,6 +81,19 @@ export const IssueClusterEnum = z.enum([
   "low_cvr_high_ctr",
   "volume_shortfall",
   "uncategorized",
+  // Meta-specifieke clusters (M2). De enum is een superset over kanalen; de prompt per kanaal
+  // bepaalt welke daadwerkelijk aan de LLM worden aangeboden. Google-findings gebruiken deze niet.
+  "creative_fatigue",
+  "hook_dropoff",
+  "creative_winner",
+  "audience_overlap",
+  "learning_phase_instability",
+  "placement_waste",
+  "frequency_saturation",
+  "funnel_dropoff",
+  "attribution_gap",
+  "demo_inefficiency",
+  "budget_constraint",
 ]);
 export type IssueCluster = z.infer<typeof IssueClusterEnum>;
 

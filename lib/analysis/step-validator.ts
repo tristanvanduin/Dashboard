@@ -29,14 +29,14 @@ type ActionDomain =
   | "checkout"
   | "synthesis";
 
-interface StepPurityRule {
+export interface StepPurityRule {
   allowedEntityTypes?: EntityType[];
   allowedActionDomains?: ActionDomain[];
   forbiddenNarrativePatterns?: RegExp[];
   note: string;
 }
 
-const STEP_PURITY_RULES: Partial<Record<number, StepPurityRule>> = {
+export const STEP_PURITY_RULES: Partial<Record<number, StepPurityRule>> = {
   1: {
     allowedEntityTypes: ["account", "campaign"],
     allowedActionDomains: ["tracking", "budget", "campaign"],
@@ -135,14 +135,14 @@ export function inferActionDomains(text: string): ActionDomain[] {
     .map(([domain]) => domain);
 }
 
-export function isFindingAlignedWithStep(stepNumber: number, entityType: EntityType): boolean {
-  const rule = STEP_PURITY_RULES[stepNumber];
+export function isFindingAlignedWithStep(stepNumber: number, entityType: EntityType, rules: Partial<Record<number, StepPurityRule>> = STEP_PURITY_RULES): boolean {
+  const rule = rules[stepNumber];
   if (!rule?.allowedEntityTypes || rule.allowedEntityTypes.length === 0) return true;
   return rule.allowedEntityTypes.includes(entityType);
 }
 
-export function isActionAlignedWithStep(stepNumber: number, action: string): boolean {
-  const rule = STEP_PURITY_RULES[stepNumber];
+export function isActionAlignedWithStep(stepNumber: number, action: string, rules: Partial<Record<number, StepPurityRule>> = STEP_PURITY_RULES): boolean {
+  const rule = rules[stepNumber];
   if (!rule?.allowedActionDomains || rule.allowedActionDomains.length === 0) return true;
   const domains = inferActionDomains(action);
   if (domains.length === 0) return true;
@@ -166,21 +166,58 @@ function isLowerBetterMetric(metric: string): boolean {
   return /^(CPA|CPC|Bounce|Bounce Rate|Cost|Spend)$/i.test(metric.trim());
 }
 
+// F3 4c: vaste SOP-logformat-frasen per stap, letterlijk overgenomen uit SOP_LOG_FORMATS in
+// lib/prompts/monthly-v2.ts (niet verzonnen). Een log_entry die het format volgt matcht minstens
+// een van deze frasen. Stap 13 heeft geen format (synthese) en staat hier bewust niet in.
+export const LOG_FORMAT_SKELETONS: Record<number, RegExp[]> = {
+  1: [/is te verklaren door/i, /maand op maand/i],
+  2: [/dragen sterk bij aan/i, /breuklijn te identificeren/i, /presteert (boven|onder)gemiddeld/i],
+  3: [/dragen sterk bij aan/i, /breuklijn te identificeren/i, /presteert (boven|onder)gemiddeld/i],
+  4: [/sinds de week van/i, /is sinds .{0,40}zichtbaar/i],
+  5: [/geïdentificeerd als/i, /trend charts/i, /vertoningen/i],
+  6: [/breuklijn te identificeren/i, /under-index/i, /over-index/i],
+  7: [/geïdentificeerd als/i, /spendeerde deze zoekterm/i],
+  8: [/presteert sinds tijdframe/i, /kijkende naar de asset/i],
+  9: [/presteert (boven|onder)gemiddeld/i, /trend zichtbaar/i],
+  10: [/presteerde afgelopen maand (boven|onder)gemiddeld/i, /bounce rate/i, /engagement rate/i],
+  11: [/(boven|onder)gemiddeld afgelopen maand/i, /waarneembaar sinds/i],
+  12: [/drop-off/i, /over de laatste 2 maanden/i, /blijft deze observatie in stand/i],
+};
+
+// G4 4a: formuleringen waarmee het model een term als niet-bestaand of toekomstig wegzet. Als de
+// twijfel-zin een product-versie-term bevat die WEL in de live data voorkomt, is het waarschijnlijk
+// een kennis-cutoff-artefact (bijvoorbeeld iPhone 17 in 2026) en geen echt niet-bestaand product.
+const WORLD_KNOWLEDGE_DOUBT_PATTERNS: RegExp[] = [
+  /niet[- ]bestaande?/i,
+  /niet[- ]bestaan/i,
+  /bestaat\s+(nog\s+)?niet/i,
+  /toekomstig(e)?\s+(model|product|variant|versie|generatie|iphone|telefoon)/i,
+  /future intent waste/i,
+  /fictief\s+product/i,
+];
+
 export function validateStepOutput(
   stepNumber: number,
   output: StepOutput,
   priorStepConclusion?: string,
   options?: {
     availability?: StepDataAvailability | null;
+    liveTerms?: string[];
+    purityRules?: Partial<Record<number, StepPurityRule>>;
+    logFormatSkeletons?: Record<number, RegExp[]>;
   }
 ): StepValidationResult {
   const warnings: string[] = [];
   const errors: string[] = [];
+  // Kanaal-bewuste regels: de adapter kan eigen purity-regels en log-format-skeletons leveren
+  // (Meta verschilt van Google). Zonder override gelden de Google-constanten, dus byte-identiek.
+  const purityRules = options?.purityRules ?? STEP_PURITY_RULES;
+  const logFormatSkeletons = options?.logFormatSkeletons ?? LOG_FORMAT_SKELETONS;
 
   if (stepNumber > 1) {
-    const startsWithCrossRef = /^In stap \d/i.test(output.narrative.trim());
-    if (!startsWithCrossRef) {
-      warnings.push(`AC-06: Narratief opent niet met 'In stap ${stepNumber - 1}...'`);
+    const opensWithRecap = /^(In stap \d|In de vorige stap)/i.test(output.narrative.trim());
+    if (opensWithRecap) {
+      warnings.push("AC-06: Narratief opent met een recap van een eerdere stap; begin direct met de eigen bevinding.");
     }
     if (!priorStepConclusion?.trim()) {
       warnings.push("Cross-reference context ontbreekt vanuit vorige stapconclusie");
@@ -196,7 +233,7 @@ export function validateStepOutput(
   }
 
   for (const finding of output.top_3_findings) {
-    if (!isFindingAlignedWithStep(stepNumber, finding.entity_type)) {
+    if (!isFindingAlignedWithStep(stepNumber, finding.entity_type, purityRules)) {
       warnings.push(`Step-purity: finding "${finding.entity_name}::${finding.metric}" ligt buiten het primaire domein van stap ${stepNumber}`);
     }
   }
@@ -211,7 +248,7 @@ export function validateStepOutput(
     if (/(consolideer|optimaliseer|onderzoek|analyseer)/i.test(action.actie)) {
       errors.push(`Verboden woord in actie: "${action.actie}"`);
     }
-    if (!isActionAlignedWithStep(stepNumber, action.actie)) {
+    if (!isActionAlignedWithStep(stepNumber, action.actie, purityRules)) {
       warnings.push(`Step-purity: actie "${action.actie}" ligt waarschijnlijk buiten het primaire domein van stap ${stepNumber}`);
     }
   }
@@ -228,7 +265,7 @@ export function validateStepOutput(
   if (weakestEvidenceOnly && /\b(bevestigt|toont aan|bewijst|is de oorzaak van)\b/i.test(narrative)) {
     warnings.push("Narratief klinkt te stellig voor findings met alleen hypothesis/unknown evidence");
   }
-  const purityRule = STEP_PURITY_RULES[stepNumber];
+  const purityRule = purityRules[stepNumber];
   if (purityRule?.forbiddenNarrativePatterns?.some((pattern) => pattern.test(narrative))) {
     warnings.push(`Step-purity: narratief van stap ${stepNumber} lijkt buiten het eigen analyse-domein te redeneren`);
   }
@@ -340,6 +377,45 @@ export function validateStepOutput(
 
   if (purityRule && output.step_conclusion && purityRule.forbiddenNarrativePatterns?.some((pattern) => pattern.test(output.step_conclusion))) {
     warnings.push(`Step-purity: step_conclusion van stap ${stepNumber} trekt waarschijnlijk een later-domein conclusie. ${purityRule.note}`);
+  }
+
+  // AC-08: minimaal 60 procent van de relevante log_entries volgt het SOP-logformat (matcht een
+  // skeleton-frase) EN bevat een concreet getal. Werkwijze-kopjes en data-niet-beschikbaar tellen niet mee.
+  const skeletons = logFormatSkeletons[stepNumber];
+  if (skeletons && skeletons.length > 0 && output.log_entries.length > 0) {
+    const relevantEntries = output.log_entries.filter((entry) => {
+      const trimmed = entry.trim();
+      return !/^werkwijze/i.test(trimmed) && !/data niet beschikbaar/i.test(trimmed);
+    });
+    if (relevantEntries.length > 0) {
+      const conforms = (entry: string) => skeletons.some((skeleton) => skeleton.test(entry)) && /\d/.test(entry);
+      const conformingCount = relevantEntries.filter(conforms).length;
+      if (conformingCount / relevantEntries.length < 0.6) {
+        const firstDeviating = relevantEntries.find((entry) => !conforms(entry));
+        warnings.push(
+          `AC-08: log_entries volgen het SOP-logformat onvoldoende (${conformingCount}/${relevantEntries.length} conform)` +
+            (firstDeviating ? `; voorbeeld afwijking: "${firstDeviating.slice(0, 120)}"` : "")
+        );
+      }
+    }
+  }
+
+  // G4 4a: wereldkennis-gronding. Een twijfel-zin die een product-versie-term noemt die in de live
+  // campagne-, zoekterm- of productdata voorkomt, is waarschijnlijk een kennis-cutoff-artefact.
+  const liveTerms = options?.liveTerms;
+  if (liveTerms && liveTerms.length > 0) {
+    const liveTermSet = liveTerms.map((term) => term.toLowerCase()).filter((term) => term.length >= 3);
+    const text = `${output.narrative} ${output.log_entries.join(" ")}`;
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    for (const sentence of sentences) {
+      if (!WORLD_KNOWLEDGE_DOUBT_PATTERNS.some((pattern) => pattern.test(sentence))) continue;
+      const candidates = (sentence.match(/\b[\p{L}]+\s?\d{1,4}\b/giu) || []).map((candidate) => candidate.toLowerCase().replace(/\s+/g, " ").trim());
+      const hit = candidates.find((candidate) => liveTermSet.some((term) => term.includes(candidate)));
+      if (hit) {
+        warnings.push(`Wereldkennis: "${hit}" wordt als niet-bestaand of toekomstig bestempeld, maar komt voor in de live campagne-, zoekterm- of productdata; dit is waarschijnlijk een kennis-cutoff-artefact en mag niet zonder andere onderbouwing als niet-bestaand of waste worden geclassificeerd.`);
+        break;
+      }
+    }
   }
 
   return {

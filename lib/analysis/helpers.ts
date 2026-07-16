@@ -1,3 +1,4 @@
+import { recordUsage, channelFromSopType } from "@/lib/analysis/o2-targets-cost";
 /**
  * Shared helpers for the /api/analysis/* routes.
  */
@@ -10,7 +11,8 @@ import {
   determineAccountType,
   type AccountType,
 } from "../prompts/sop-prompts";
-import { callOpenRouter, type OpenRouterResponse } from "./openrouter-client";
+import { type OpenRouterResponse } from "./openrouter-client";
+import { callRouted } from "./llm-router";
 
 const SOP_OUTPUT_CONFLICT_COLUMNS = "client_id,sop_type,analysis_date,section";
 
@@ -34,6 +36,8 @@ export function getOpenRouterKey(): string | null {
 export interface ClientContext {
   goalsSection: string;
   accountType: AccountType;
+  /** W1.1: het ruwe goals-config-object, zodat de route de goalsSection kan herbouwen met een plausibiliteits-flag. */
+  goalsConfig?: Record<string, unknown>;
 }
 
 function getGoogleAdsCredentials(): GoogleAdsCredentials | null {
@@ -122,6 +126,7 @@ export async function fetchClientContext(
     return {
       goalsSection: buildGoalsSection({ ...config, accountType }),
       accountType,
+      goalsConfig: { ...config, accountType },
     };
   }
 
@@ -148,6 +153,7 @@ export async function fetchClientContext(
     return {
       goalsSection: buildGoalsSection({ ...config, accountType }),
       accountType,
+      goalsConfig: { ...config, accountType },
     };
   }
 
@@ -167,6 +173,7 @@ export async function fetchClientContext(
   return {
     goalsSection: buildGoalsSection({ ...config, accountType }),
     accountType,
+    goalsConfig: { ...config, accountType },
   };
 }
 
@@ -287,7 +294,7 @@ export async function runAnalysis(opts: {
   const { supabase, apiKey, clientId, sopType, systemPrompt, userMessage, periodStart, periodEnd } = opts;
   const analysisDate = new Date().toISOString().split("T")[0];
 
-  const response = await callOpenRouter({
+  const response = await callRouted({
     apiKey,
     systemPrompt,
     userMessage,
@@ -351,11 +358,34 @@ export async function runStep(opts: {
   stepName: string;
   /** Request JSON mode for structured output steps */
   jsonMode?: boolean;
+  /** W1.1: run-sleutel (jobId) voor de llm_usage-kostenregistratie; zonder runKey wordt niets gelogd. */
+  runKey?: string;
+  /** W1.1: kanaal voor de kostenregistratie; valt terug op channelFromSopType. */
+  channel?: string;
+  /** X3: als gezet, wordt de exacte prompt-payload als fixture weggeschreven voor replay. */
+  evalCapture?: { fixtureSet: string } | null;
+  /** X3: de soort aanroep voor de fixture; replay speelt standaard alleen "step". */
+  evalKind?: "step" | "checkpoint" | "repair";
 }): Promise<StepResult> {
   const { supabase, apiKey, clientId, sopType, systemPrompt, userMessage, periodStart, periodEnd, stepNumber, stepName, jsonMode } = opts;
   const analysisDate = new Date().toISOString().split("T")[0];
 
-  const response = await callOpenRouter({
+  // X3 fixture-capture: de exacte system- en user-prompt wegschrijven VOOR de call, zodat de
+  // fixture er ook is als de call faalt. Capture mag de analyse-run nooit breken.
+  if (opts.evalCapture?.fixtureSet && opts.runKey) {
+    try {
+      await supabase.from("eval_fixtures").insert({
+        fixture_set: opts.evalCapture.fixtureSet,
+        run_key: opts.runKey,
+        step: stepNumber,
+        payload: { systemPrompt, userMessage, stepName, sopType, jsonMode: jsonMode ?? false, kind: opts.evalKind ?? "step" },
+      });
+    } catch (captureError) {
+      console.warn("[eval] fixture-capture faalde (de run gaat door):", captureError);
+    }
+  }
+
+  const response = await callRouted({
     apiKey,
     systemPrompt,
     userMessage,
@@ -363,6 +393,19 @@ export async function runStep(opts: {
     jsonMode,
     label: `${sopType}-step-${stepNumber}-${stepName.toLowerCase().replace(/\s+/g, "-")}`,
   });
+
+  if (opts.runKey) {
+    void recordUsage(supabase, {
+      runKey: opts.runKey,
+      clientId,
+      channel: opts.channel ?? channelFromSopType(sopType),
+      sopType,
+      stepLabel: stepName,
+      model: response.model,
+      promptTokens: response.promptTokens ?? 0,
+      completionTokens: response.completionTokens ?? 0,
+    });
+  }
 
   const { error } = await saveAnalysisOutputSection({
     supabase,

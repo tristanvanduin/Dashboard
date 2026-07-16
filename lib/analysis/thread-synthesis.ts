@@ -24,53 +24,19 @@ export interface ThreadSynthesisOutput {
   executive_headline: string;
 }
 
-export function enforceIceSpread<T extends Pick<ThreadRecommendation, "ice_impact" | "ice_confidence" | "ice_ease" | "ice_total">>(
+export function rankRecommendationsByIce<T extends Pick<ThreadRecommendation, "ice_impact" | "ice_confidence" | "ice_ease" | "ice_total">>(
   recommendations: T[]
 ): T[] {
-  if (recommendations.length === 0) return recommendations;
-
-  const ranked = [...recommendations].sort((a, b) => b.ice_total - a.ice_total);
-
-  ranked.forEach((recommendation, index) => {
-    let impact = recommendation.ice_impact;
-    let confidence = recommendation.ice_confidence;
-    let ease = recommendation.ice_ease;
-
-    if (index === 0) {
-      impact = Math.max(impact, 8.5);
-      confidence = Math.max(confidence, 7.5);
-      ease = Math.max(ease, 7);
-    } else if (index === ranked.length - 1) {
-      impact = Math.min(impact, 5.5);
-      confidence = Math.min(confidence, 5.5);
-      ease = Math.min(ease, 5.5);
-    } else {
-      impact = Math.min(impact, 7.5);
-      confidence = Math.min(confidence, 7);
-      ease = Math.min(ease, 6.5);
-    }
-
-    recommendation.ice_impact = Number(impact.toFixed(1));
-    recommendation.ice_confidence = Number(confidence.toFixed(1));
-    recommendation.ice_ease = Number(ease.toFixed(1));
-    recommendation.ice_total = Number(((impact + confidence + ease) / 3).toFixed(1));
-  });
-
-  const highest = ranked[0];
-  const lowest = ranked[ranked.length - 1];
-  if (highest && lowest && highest.ice_total - lowest.ice_total < 2) {
-    highest.ice_impact = Math.min(10, Math.max(highest.ice_impact, lowest.ice_total + 3));
-    highest.ice_confidence = Math.min(10, Math.max(highest.ice_confidence, 8));
-    highest.ice_ease = Math.min(10, Math.max(highest.ice_ease, 7.5));
-    highest.ice_total = Number(((highest.ice_impact + highest.ice_confidence + highest.ice_ease) / 3).toFixed(1));
-
-    lowest.ice_impact = Math.max(3, Math.min(lowest.ice_impact, 5));
-    lowest.ice_confidence = Math.max(3, Math.min(lowest.ice_confidence, 5));
-    lowest.ice_ease = Math.max(3, Math.min(lowest.ice_ease, 5));
-    lowest.ice_total = Number(((lowest.ice_impact + lowest.ice_confidence + lowest.ice_ease) / 3).toFixed(1));
-  }
-
-  return ranked;
+  // Honest ranking. Order recommendations by their genuine ICE total and return
+  // them unchanged. We deliberately do NOT floor the top, cap the bottom, or
+  // force a minimum spread. The ICE scores come from the grounded rubric
+  // (impact = share of spend and primary KPI, confidence = evidence level and
+  // confirming steps, ease = effort in the platform). If two recommendations
+  // score close together, that is an honest signal they are comparably
+  // important; manufacturing a gap would misrepresent the analysis. A genuinely
+  // weak top recommendation is allowed to keep its low score. Pure: the input
+  // objects are not mutated.
+  return [...recommendations].sort((a, b) => b.ice_total - a.ice_total);
 }
 
 function unique<T>(values: T[]): T[] {

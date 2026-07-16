@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { getSupabase } from "@/lib/analysis/helpers";
+import { decideTransition } from "@/lib/learning/hypothesis-status";
 import type { MonthlyStructuredOutput, OperatingHypothesisTrace } from "@/lib/analysis/monthly-structured";
 import {
   buildMonthlyHypothesesInsightsPayload,
@@ -259,6 +260,18 @@ export async function POST(request: NextRequest) {
       rejected_reason: rejectedReason.trim(),
     });
 
+    // De statusmachine bewaakt de overgang: een afgeronde of al afgewezen hypothese kan
+    // niet zomaar opnieuw beslist worden.
+    const rejectDecision = decideTransition({
+      current: { status: persisted.status, accepted_at: persisted.accepted_at ?? null },
+      next: "rejected",
+      reason: rejectedReason.trim(),
+      now: new Date().toISOString(),
+    });
+    if (!rejectDecision.ok) {
+      return Response.json({ error: rejectDecision.reason }, { status: 409 });
+    }
+
     const { error: rejectError } = await ctx.supabase
       .from("sprint_hypotheses")
       .update({
@@ -418,13 +431,30 @@ export async function POST(request: NextRequest) {
     rejected_reason: null,
   });
 
+  // De statusmachine beslist. Twee dingen die hier eerder misgingen:
+  // (1) een al AFGEWEZEN hypothese kon alsnog geaccepteerd worden, want de huidige status
+  //     werd niet gelezen;
+  // (2) accepted_at werd bij ELKE accept opnieuw geschreven, ook bij de tweede (bewust
+  //     idempotente) accept die de taken herpusht. Daardoor verschoof het startpunt van
+  //     het meetvenster en meet de H1-evaluator een ander venster dan bedoeld.
+  // De kern staat een herhaling toe maar levert accepted_at alleen bij de ECHTE overgang.
+  const acceptDecision = decideTransition({
+    current: { status: persisted.status, accepted_at: persisted.accepted_at ?? null },
+    next: "accepted",
+    now: new Date().toISOString(),
+  });
+  if (!acceptDecision.ok) {
+    return Response.json({ error: acceptDecision.reason }, { status: 409 });
+  }
+
+  const acceptUpdate: Record<string, unknown> = { status: "accepted", rationale: metadata };
+  if (acceptDecision.patch.accepted_at) {
+    acceptUpdate.accepted_at = acceptDecision.patch.accepted_at;
+  }
+
   const { error: acceptError } = await ctx.supabase
     .from("sprint_hypotheses")
-    .update({
-      status: "accepted",
-      accepted_at: new Date().toISOString(),
-      rationale: metadata,
-    })
+    .update(acceptUpdate)
     .eq("id", persisted.id);
 
   if (acceptError) {
