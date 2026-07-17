@@ -1,7 +1,22 @@
-# W1.5 (Z2): geplande backups en maandelijkse restore-proef. Secrets staan in
-# repo-secrets, nooit in de repo. Bij een mislukte job gaat er een backup_failed- of
-# backup_restore_failed-event naar het notify-endpoint met CRON_SECRET. LIVE-ONGETEST tot
-# de secrets en het scratch-doel geregeld zijn.
+# W1.5 (Z2): geplande backups en maandelijkse restore-proef. Secrets staan in repo-secrets,
+# nooit in de repo. Bij een mislukte job gaat er een backup_failed- of
+# backup_restore_failed-event naar het notify-endpoint met CRON_SECRET.
+#
+# TWEE ONTWERPKEUZES, allebei het gevolg van de eerste live run:
+#
+# (1) DE GUARD. Zolang DATABASE_URL en GPG_RECIPIENT niet in de repo-secrets staan, SLAAT
+#     deze workflow over met een zichtbare notice in plaats van te falen. Zonder die guard
+#     faalt hij elke nacht om 03:00 en komt er elke ochtend een mail over iets wat je al
+#     weet. Een alert die dagelijks afgaat traint je om alerts te negeren, en dan mis je de
+#     echte. De regel die hieruit volgt: NIET-INGERICHT is geen FOUT, het is nog-niet-aan.
+#     Pas als de secrets er zijn en de dump dan mislukt, is er iets aan de hand en hoort hij
+#     hard te falen. Precies dan is de mail signaal in plaats van ruis.
+#
+# (2) GEEN npm ci IN DE DUMP-JOB. dump.sh is puur bash: pg_dump, gzip en gpg. De enige
+#     node-verwijzing in dat script staat in een COMMENT (de prune-stap, die nog niet
+#     bestaat). 940 packages installeren voor een bash-script kost de halve looptijd en
+#     levert niets. De restore-job houdt zijn node-setup wel, want die gaat straks echt
+#     scripts draaien.
 name: backup
 on:
   schedule:
@@ -13,34 +28,69 @@ jobs:
     if: github.event.schedule != '0 4 1 * *'
     runs-on: ubuntu-latest
     steps:
+      - name: Zijn de secrets ingericht?
+        id: guard
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GPG_RECIPIENT: ${{ secrets.GPG_RECIPIENT }}
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$GPG_RECIPIENT" ]; then
+            echo "klaar=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Backup overgeslagen::DATABASE_URL of GPG_RECIPIENT staat niet in de repo-secrets. Dit is geen fout: de backup is nog niet ingericht. Zet beide secrets onder Settings, Secrets and variables, Actions en de volgende run draait vanzelf."
+          else
+            echo "klaar=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "20" }
-      - run: npm ci
+        if: steps.guard.outputs.klaar == 'true'
       - name: Dump plus versleutelen
+        if: steps.guard.outputs.klaar == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GPG_RECIPIENT: ${{ secrets.GPG_RECIPIENT }}
         run: bash scripts/backup/dump.sh
       - name: Melding bij falen
-        if: failure()
+        if: failure() && steps.guard.outputs.klaar == 'true'
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-        run: 'curl -fsS -X POST "${{ secrets.NOTIFY_URL }}" -H "x-cron-secret: $CRON_SECRET" -H "content-type: application/json" -d ''{"type":"backup_failed","kernfeit":"dagelijkse dump-job mislukt"}'' || true'
+          NOTIFY_URL: ${{ secrets.NOTIFY_URL }}
+        run: |
+          if [ -n "$NOTIFY_URL" ]; then
+            curl -fsS -X POST "$NOTIFY_URL" -H "x-cron-secret: $CRON_SECRET" -H "content-type: application/json" -d '{"type":"backup_failed","kernfeit":"dagelijkse dump-job mislukt"}' || true
+          fi
+
   restore-test:
     if: github.event.schedule == '0 4 1 * *'
     runs-on: ubuntu-latest
     steps:
+      - name: Zijn de secrets ingericht?
+        id: guard
+        env:
+          SCRATCH_DATABASE_URL: ${{ secrets.SCRATCH_DATABASE_URL }}
+        run: |
+          if [ -z "$SCRATCH_DATABASE_URL" ]; then
+            echo "klaar=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Restore-proef overgeslagen::SCRATCH_DATABASE_URL staat niet in de repo-secrets. De restore-proef heeft een wegwerp-database nodig; zonder dat doel valt er niets te herstellen."
+          else
+            echo "klaar=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.guard.outputs.klaar == 'true'
       - uses: actions/setup-node@v4
+        if: steps.guard.outputs.klaar == 'true'
         with: { node-version: "20" }
       - run: npm ci
+        if: steps.guard.outputs.klaar == 'true'
       - name: Restore-proef
+        if: steps.guard.outputs.klaar == 'true'
         env:
           SCRATCH_DATABASE_URL: ${{ secrets.SCRATCH_DATABASE_URL }}
         run: echo "TODO haal de laatste dump plus manifest uit de bucket en draai scripts/backup/restore-test.sh"
       - name: Melding bij falen
-        if: failure()
+        if: failure() && steps.guard.outputs.klaar == 'true'
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-        run: 'curl -fsS -X POST "${{ secrets.NOTIFY_URL }}" -H "x-cron-secret: $CRON_SECRET" -H "content-type: application/json" -d ''{"type":"backup_restore_failed","kernfeit":"maandelijkse restore-proef mislukt"}'' || true'
+          NOTIFY_URL: ${{ secrets.NOTIFY_URL }}
+        run: |
+          if [ -n "$NOTIFY_URL" ]; then
+            curl -fsS -X POST "$NOTIFY_URL" -H "x-cron-secret: $CRON_SECRET" -H "content-type: application/json" -d '{"type":"backup_restore_failed","kernfeit":"maandelijkse restore-proef mislukt"}' || true
+          fi
