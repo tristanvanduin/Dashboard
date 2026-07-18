@@ -192,6 +192,11 @@ export function ClientDashboard({ client }: { client: Client }) {
               {channel === "google" && (
               <>
               <HealthBadge clientId={client.id} />
+              {geoClone && (
+                <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2.5 text-[11px] text-blue-800">
+                  Beurs-scope actief ({geoClone}). De campagne- en zoekterm-weergaven zijn per beurs gefilterd; de account-brede maand- en jaaroverzichten hieronder tonen het <strong>hele account</strong> (die tabellen dragen geen campagnenaam en zijn niet per beurs te splitsen).
+                </div>
+              )}
 
               {/* Country filter for dashboard (only if multi-country) */}
               {clientData.detectedCountries && clientData.detectedCountries.length > 1 && (
@@ -249,7 +254,7 @@ export function ClientDashboard({ client }: { client: Client }) {
               {channel === "google" && (
                 <div className="space-y-6">
                   <CampaignTable clientId={client.id} geoClone={geoClone} countryFilter={countryFilter} onCountryFilterChange={setCountryFilter} />
-                  <SearchTermsTable clientId={client.id} countryFilter={countryFilter} />
+                  <SearchTermsTable clientId={client.id} geoClone={geoClone} countryFilter={countryFilter} />
                 </div>
               )}
               {channel === "meta" && <MetaView clientId={client.id} />}

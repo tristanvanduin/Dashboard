@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { AlertTriangle, ArrowUpDown, Sparkles } from "lucide-react";
 import { useClientDataState } from "@/lib/client-data-provider";
+import { matchGeoCloneByCampaignName } from "@/lib/rai/geo-clone-catalog";
 import { detectSearchTermCountries } from "@/lib/countries";
 import { SearchTermAnalysisTab } from "./search-term-analysis-tab";
 
@@ -15,7 +16,7 @@ function fmt(v: number): string {
 
 type SortKey = "cost" | "clicks" | "term";
 
-export function SearchTermsTable({ clientId, countryFilter }: { clientId?: string; countryFilter?: string | null }) {
+export function SearchTermsTable({ clientId, countryFilter, geoClone }: { clientId?: string; countryFilter?: string | null; geoClone?: string | null }) {
   const dataState = useClientDataState();
   const countryShares = dataState?.campaignCountryShares ?? {};
   const countryMap = dataState?.campaignCountryMap ?? {};
@@ -51,15 +52,18 @@ export function SearchTermsTable({ clientId, countryFilter }: { clientId?: strin
   const allBleeders = dataState?.adGroupBleeders ?? [];
   const allProductBleeders = dataState?.productBleeders ?? [];
 
-  const terms = countryFilter
-    ? allTerms.filter((t) => termMatchesCountry(t.searchTerm, t.campaignName, countryFilter))
-    : allTerms;
-  const bleeders = countryFilter
-    ? allBleeders.filter((b) => campaignMatchesCountry(b.campaignName, countryFilter))
-    : allBleeders;
-  const productBleeders = countryFilter
-    ? allProductBleeders.filter((p) => campaignMatchesCountry(p.campaignName, countryFilter))
-    : allProductBleeders;
+  const geoOk = (campaignName: string): boolean =>
+    !geoClone || matchGeoCloneByCampaignName(campaignName)?.abbreviation === geoClone;
+
+  const terms = allTerms.filter(
+    (t) => geoOk(t.campaignName) && (!countryFilter || termMatchesCountry(t.searchTerm, t.campaignName, countryFilter))
+  );
+  const bleeders = allBleeders.filter(
+    (b) => geoOk(b.campaignName) && (!countryFilter || campaignMatchesCountry(b.campaignName, countryFilter))
+  );
+  const productBleeders = allProductBleeders.filter(
+    (p) => geoOk(p.campaignName) && (!countryFilter || campaignMatchesCountry(p.campaignName, countryFilter))
+  );
   const resolvedClientId = clientId || (dataState?.googleAdsCustomerId ? `gads-${dataState.googleAdsCustomerId}` : "");
   const [subtab, setSubtab] = useState<"terms" | "adgroups" | "products" | "ai">("terms");
   const [sortBy, setSortBy] = useState<SortKey>("cost");
