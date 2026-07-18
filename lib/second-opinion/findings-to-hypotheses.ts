@@ -116,7 +116,10 @@ export type ProposalSource =
   | "bid_strategy"
   | "impression_share"
   | "rsa_insights"
-  | "landing_audit";
+  | "landing_audit"
+  | "meta_signals"
+  | "linkedin_signals"
+  | "cross_channel";
 
 /**
  * Schrijft nieuwe pending voorstellen weg en vervangt de oude van dezelfde bron,
