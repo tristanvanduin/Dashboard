@@ -32,6 +32,7 @@ import { LinkedInView } from "./linkedin-view";
 import { CrossChannelView } from "./cross-channel-view";
 import { BrandingView } from "./branding-view";
 import { EventSettings } from "./event-settings";
+import { GeoCloneSettingsPanel } from "./geo-clone-settings";
 import { GeoCloneScope } from "./geo-clone-scope";
 import { GeoCloneOverview } from "./geo-clone-overview";
 import { TrackingAlert } from "./tracking-alert";
@@ -316,9 +317,29 @@ export function ClientDashboard({ client }: { client: Client }) {
 
           {activeTab === "settings" && (
             <div className="space-y-6">
-              <ClientSettingsPanel clientId={client.id} clientName={client.name} />
-              <EventSettings clientId={client.id} />
-              <BrandingView clientId={client.id} clientName={client.name} />
+              {geoClone ? (
+                // Beurs gekozen: de eigen instellingen-laag van deze geo-clone (branding, doelen,
+                // event-datums) met account-fallback. Het account-niveau blijft eronder zichtbaar.
+                <>
+                  <GeoCloneSettingsPanel clientId={client.id} geoClone={geoClone} />
+                  <details className="rounded-xl border border-border bg-gray-50/50">
+                    <summary className="cursor-pointer px-5 py-3 text-[12px] font-medium text-muted-foreground">
+                      Account-instellingen (waarvan de beurzen erven) tonen
+                    </summary>
+                    <div className="p-5 space-y-6">
+                      <ClientSettingsPanel clientId={client.id} clientName={client.name} />
+                      <EventSettings clientId={client.id} />
+                      <BrandingView clientId={client.id} clientName={client.name} />
+                    </div>
+                  </details>
+                </>
+              ) : (
+                <>
+                  <ClientSettingsPanel clientId={client.id} clientName={client.name} />
+                  <EventSettings clientId={client.id} />
+                  <BrandingView clientId={client.id} clientName={client.name} />
+                </>
+              )}
             </div>
           )}
         </AnalysisProvider>
