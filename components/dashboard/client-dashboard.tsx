@@ -31,6 +31,7 @@ import { MetaView } from "./meta-view";
 import { LinkedInView } from "./linkedin-view";
 import { CrossChannelView } from "./cross-channel-view";
 import { BrandingView } from "./branding-view";
+import { EventSettings } from "./event-settings";
 import { TrackingAlert } from "./tracking-alert";
 import { ClientReporting } from "./client-reporting";
 import { useClientData } from "@/lib/use-client-data";
@@ -301,6 +302,7 @@ export function ClientDashboard({ client }: { client: Client }) {
           {activeTab === "settings" && (
             <div className="space-y-6">
               <ClientSettingsPanel clientId={client.id} clientName={client.name} />
+              <EventSettings clientId={client.id} />
               <BrandingView clientId={client.id} clientName={client.name} />
             </div>
           )}
