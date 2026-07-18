@@ -10,6 +10,7 @@
 //   - hook/hold-zwakte: hook- of hold-rate ver onder de accountmediaan (relatief, geen verzonnen norm).
 
 import { type DetectionResult, type SignalStory } from "./types";
+import { renderSignalSection, type SignalSectionResult } from "./render-section";
 
 export const FREQUENCY_FATIGUE = 3.0;       // vanaf hier is herhaling een fatigue-risico
 export const FREQUENCY_SATURATION = 4.0;    // hierboven is de doelgroep aantoonbaar te vaak bereikt
@@ -211,4 +212,10 @@ export function buildMetaCreativeSignals(input: { ads: MetaAdSignalInput[]; leve
     triggered: results.flatMap((r) => r.triggered),
     checked: [...new Set(results.flatMap((r) => r.checked))],
   };
+}
+
+// Wiring: de merged detectie renderen tot een prompt-sectie voor de Meta-analyse. Lege
+// detectie geeft een lege sectie (byte-identieke prompt voor een account zonder signalen).
+export function buildMetaSignalSection(input: { ads: MetaAdSignalInput[]; levels: MetaLevelSignalInput[] }): SignalSectionResult {
+  return renderSignalSection(buildMetaCreativeSignals(input), "Meta");
 }

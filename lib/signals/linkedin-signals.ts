@@ -10,6 +10,7 @@
 //   - video-drop-off: video-completion-rate ver onder de accountmediaan.
 
 import { type DetectionResult, type SignalStory } from "./types";
+import { renderSignalSection, type SignalSectionResult } from "./render-section";
 
 export const FORM_COMPLETION_WEAK = 0.15; // onder 15% completion op geopende forms is zwak (heuristiek)
 export const MIN_FORM_OPENS = 20;         // onder dit aantal opens is de rate ruis
@@ -172,4 +173,10 @@ export function buildLinkedInSignals(input: { entities: LinkedInEntitySignalInpu
     triggered: results.flatMap((r) => r.triggered),
     checked: [...new Set(results.flatMap((r) => r.checked))],
   };
+}
+
+// Wiring: de merged detectie renderen tot een prompt-sectie voor de LinkedIn-analyse. Lege
+// detectie geeft een lege sectie (byte-identieke prompt voor een account zonder signalen).
+export function buildLinkedInSignalSection(input: { entities: LinkedInEntitySignalInput[]; targets?: LinkedInSignalTargets }): SignalSectionResult {
+  return renderSignalSection(buildLinkedInSignals(input), "LinkedIn");
 }
