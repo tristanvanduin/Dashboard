@@ -6,6 +6,7 @@ import { useClientHistoricalData } from "@/lib/client-data-provider";
 import { computeForecast, type ClientForecast } from "@/lib/forecast";
 import { getClientSettings } from "@/lib/client-settings";
 import { supabase, type KpiSnapshot } from "@/lib/supabase";
+import { channelOfSopType, type InsightChannel } from "@/lib/insights/channel-of";
 
 type Cadence = "actions" | "weekly" | "biweekly" | "monthly";
 
@@ -257,7 +258,7 @@ function saveTasks(clientId: string, cadence: Cadence, tasks: Task[]) {
   localStorage.setItem(`${STORAGE_KEY_PREFIX}${clientId}-${cadence}`, JSON.stringify(doneMap));
 }
 
-export function TasksBlock({ clientId, selectedInsightId, refreshKey }: { clientId: string; selectedInsightId?: string | null; refreshKey?: number }) {
+export function TasksBlock({ clientId, selectedInsightId, refreshKey, channel }: { clientId: string; selectedInsightId?: string | null; refreshKey?: number; channel?: InsightChannel | null }) {
   const data = useClientHistoricalData(clientId);
   const forecast = useMemo(() => computeForecast(data), [data]);
   const dynamicTasks = useMemo(() => generateDynamicTasks(forecast), [forecast]);
@@ -281,6 +282,8 @@ export function TasksBlock({ clientId, selectedInsightId, refreshKey }: { client
 
   // Fetch AI-generated tasks from sop_tasks
   const [recInsightMap, setRecInsightMap] = useState<Map<string, string>>(new Map());
+  // Kanaal per aanbeveling (uit de sop_type): taken erven het kanaal van hun aanbeveling.
+  const [recChannelMap, setRecChannelMap] = useState<Map<string, InsightChannel>>(new Map());
 
   useEffect(() => {
     if (!supabase) return;
@@ -299,17 +302,20 @@ export function TasksBlock({ clientId, selectedInsightId, refreshKey }: { client
         setAiTasksLoading(false);
       });
 
-    // Fetch recommendation → insight_id mapping for filtering
+    // Fetch recommendation → insight_id + kanaal mapping for filtering
     supabase
       .from("sop_recommendations")
-      .select("id, insight_id")
+      .select("id, insight_id, sop_type")
       .eq("client_id", clientId)
       .then(({ data: rows }) => {
         const map = new Map<string, string>();
-        for (const r of (rows ?? []) as Array<{ id: string; insight_id: string | null }>) {
+        const chMap = new Map<string, InsightChannel>();
+        for (const r of (rows ?? []) as Array<{ id: string; insight_id: string | null; sop_type: string | null }>) {
           if (r.insight_id) map.set(r.id, r.insight_id);
+          chMap.set(r.id, channelOfSopType(r.sop_type));
         }
         setRecInsightMap(map);
+        setRecChannelMap(chMap);
       });
   }, [clientId, cadence, refreshKey]);
 
@@ -428,13 +434,18 @@ export function TasksBlock({ clientId, selectedInsightId, refreshKey }: { client
 
       {/* AI-generated tasks from analysis */}
       {!aiTasksLoading && aiTasks.length > 0 && (() => {
+        // Kanaal-filter: het kanaal van de taak volgt uit zijn aanbeveling; zonder
+        // aanbeveling is de taak uit de Google-pijplijn (de enige die losse taken schrijft).
+        const channelTasks = channel
+          ? aiTasks.filter((t) => (t.recommendation_id ? recChannelMap.get(t.recommendation_id) ?? "google" : "google") === channel)
+          : aiTasks;
         // Filter AI tasks by selectedInsightId via recommendation chain
         const filteredAiTasks = selectedInsightId
-          ? aiTasks.filter((t) => {
+          ? channelTasks.filter((t) => {
               if (!t.recommendation_id) return false;
               return recInsightMap.get(t.recommendation_id) === selectedInsightId;
             })
-          : aiTasks;
+          : channelTasks;
 
         return filteredAiTasks.length > 0 ? (
         <div className="mb-4">

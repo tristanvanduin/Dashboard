@@ -7,6 +7,7 @@ import { computeForecast, type ClientForecast } from "@/lib/forecast";
 import { getClientSettings } from "@/lib/client-settings";
 import { supabase } from "@/lib/supabase";
 import type { ImpressionShareData } from "@/lib/use-client-data";
+import { channelOfSopType, type InsightChannel } from "@/lib/insights/channel-of";
 
 type Priority = "high" | "medium" | "low";
 
@@ -284,16 +285,19 @@ interface DbRecommendation {
   ice_confidence: number;
   ice_ease: number;
   ice_total: number;
+  sop_type: string | null;
 }
 
 export function RecommendationsBlock({
   clientId,
   selectedInsightId,
   refreshKey,
+  channel,
 }: {
   clientId: string;
   selectedInsightId?: string | null;
   refreshKey?: number;
+  channel?: InsightChannel | null;
 }) {
   const data = useClientHistoricalData(clientId);
   const dataState = useClientDataState();
@@ -306,7 +310,7 @@ export function RecommendationsBlock({
     if (!supabase) return;
     supabase
       .from("sop_recommendations")
-      .select("id, insight_id, hypothesis, expected_result, measurement_metric, timeframe, ice_impact, ice_confidence, ice_ease, ice_total")
+      .select("id, insight_id, hypothesis, expected_result, measurement_metric, timeframe, ice_impact, ice_confidence, ice_ease, ice_total, sop_type")
       .eq("client_id", clientId)
       .not("insight_id", "is", null)
       .order("ice_total", { ascending: false })
@@ -314,10 +318,12 @@ export function RecommendationsBlock({
       .then(({ data: rows }) => setDbRecs((rows ?? []) as DbRecommendation[]));
   }, [clientId, refreshKey]);
 
-  const hasDbRecs = dbRecs.length > 0;
+  // Kanaal-filter via de sop_type van de analyse die de aanbeveling schreef.
+  const channelRecs = channel ? dbRecs.filter((r) => channelOfSopType(r.sop_type) === channel) : dbRecs;
+  const hasDbRecs = channelRecs.length > 0;
   const filteredRecs = selectedInsightId
-    ? dbRecs.filter((r) => r.insight_id === selectedInsightId)
-    : dbRecs;
+    ? channelRecs.filter((r) => r.insight_id === selectedInsightId)
+    : channelRecs;
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (

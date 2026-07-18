@@ -17,6 +17,9 @@ import { TaskImpactReminder } from "../insights/task-impact-reminder";
 import { SopTriggerButtons, type SopError } from "../insights/sop-trigger-buttons";
 import { StandaloneAnalyses } from "../insights/standalone-analyses";
 import { HypothesesBlock } from "../insights/hypotheses-block";
+import { ProposalQueue } from "../insights/proposal-queue";
+import { ChannelFilter } from "../insights/channel-filter";
+import type { InsightChannel } from "@/lib/insights/channel-of";
 import { SprintPlanning } from "../insights/sprint-planning";
 import { CampaignTable } from "./campaign-table";
 import { SearchTermsTable } from "./search-terms-table";
@@ -352,6 +355,7 @@ export function ClientDashboard({ client }: { client: Client }) {
 function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: (error: SopError) => void }) {
   const [selectedInsightId, setSelectedInsightId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [channelFilter, setChannelFilter] = useState<InsightChannel | null>(null);
 
   return (
     <div className="space-y-6">
@@ -362,18 +366,22 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
       />
       <StandaloneAnalyses clientId={clientId} />
       <TaskImpactReminder clientId={clientId} />
+      {/* Kanaal-filter over inzichten, aanbevelingen, hypotheses, wachtrij en taken. */}
+      <ChannelFilter value={channelFilter} onChange={setChannelFilter} />
+      <ProposalQueue clientId={clientId} refreshKey={refreshKey} channel={channelFilter} onWorkflowChange={() => setRefreshKey((k) => k + 1)} />
       <InsightsBlock
         clientId={clientId}
         selectedInsightId={selectedInsightId}
         onSelectInsight={setSelectedInsightId}
         refreshKey={refreshKey}
+        channel={channelFilter}
       />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="space-y-6">
-          <RecommendationsBlock clientId={clientId} selectedInsightId={selectedInsightId} refreshKey={refreshKey} />
-          <HypothesesBlock clientId={clientId} refreshKey={refreshKey} onWorkflowChange={() => setRefreshKey((k) => k + 1)} />
+          <RecommendationsBlock clientId={clientId} selectedInsightId={selectedInsightId} refreshKey={refreshKey} channel={channelFilter} />
+          <HypothesesBlock clientId={clientId} refreshKey={refreshKey} onWorkflowChange={() => setRefreshKey((k) => k + 1)} channel={channelFilter} />
         </div>
-        <TasksBlock clientId={clientId} selectedInsightId={selectedInsightId} refreshKey={refreshKey} />
+        <TasksBlock clientId={clientId} selectedInsightId={selectedInsightId} refreshKey={refreshKey} channel={channelFilter} />
       </div>
       <ReportExport clientId={clientId} />
     </div>

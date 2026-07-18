@@ -7,6 +7,7 @@ import { computeForecast, type ClientForecast } from "@/lib/forecast";
 import { getClientSettings } from "@/lib/client-settings";
 import { supabase } from "@/lib/supabase";
 import type { ImpressionShareData, AccountStructureData, WastefulSearchTermData, AdGroupBleederData, ChangeHistoryData } from "@/lib/use-client-data";
+import { channelOfSopType, type InsightChannel } from "@/lib/insights/channel-of";
 
 type InsightType = "critical" | "warning" | "positive" | "info";
 
@@ -746,6 +747,7 @@ interface DbInsight {
   affected_entity_type: string;
   metric: string;
   action_required: boolean;
+  sop_type: string | null;
 }
 
 const severityToType: Record<string, InsightType> = {
@@ -761,11 +763,13 @@ export function InsightsBlock({
   selectedInsightId,
   onSelectInsight,
   refreshKey,
+  channel,
 }: {
   clientId: string;
   selectedInsightId?: string | null;
   onSelectInsight?: (id: string | null) => void;
   refreshKey?: number;
+  channel?: InsightChannel | null;
 }) {
   const data = useClientHistoricalData(clientId);
   const dataState = useClientDataState();
@@ -784,19 +788,24 @@ export function InsightsBlock({
     if (!supabase) return;
     supabase
       .from("sop_insights")
-      .select("id, title, description, severity, insight_type, affected_entity, affected_entity_type, metric, action_required")
+      .select("id, title, description, severity, insight_type, affected_entity, affected_entity_type, metric, action_required, sop_type")
       .eq("client_id", clientId)
       .order("created_at", { ascending: false })
       .limit(20)
       .then(({ data: rows }) => setDbInsights((rows ?? []) as DbInsight[]));
   }, [clientId, refreshKey]);
 
-  const hasDbInsights = dbInsights.length > 0;
+  // Kanaal-filter: het kanaal volgt uit de sop_type van de analyse die het inzicht schreef.
+  const channelFiltered = channel
+    ? dbInsights.filter((i) => channelOfSopType(i.sop_type) === channel)
+    : dbInsights;
+
+  const hasDbInsights = channelFiltered.length > 0;
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Sort dbInsights by severity priority
   const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, positive: 4 };
-  const sortedDbInsights = [...dbInsights].sort(
+  const sortedDbInsights = [...channelFiltered].sort(
     (a, b) => (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99)
   );
 
