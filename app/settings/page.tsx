@@ -670,6 +670,48 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
+
+        {/* ── LinkedIn Ads ────────────────────────────────────── */}
+        <div className="bg-white rounded-xl border border-border p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-rm-blue text-base">LinkedIn Ads API</h3>
+            <span className="text-[11px] text-muted-foreground px-2 py-0.5 rounded-full bg-gray-100">Via .env.local</span>
+          </div>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Het LinkedIn-datamodel en de sync-laag staan klaar. Voeg de volgende variabelen toe aan je{" "}
+              <code className="font-mono text-xs">.env.local</code> om de koppeling te activeren:
+            </p>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <EnvVar name="LINKEDIN_CLIENT_ID" />
+                <span className="text-[10px] text-muted-foreground">Verplicht</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <EnvVar name="LINKEDIN_CLIENT_SECRET" />
+                <span className="text-[10px] text-muted-foreground">Verplicht</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <EnvVar name="LINKEDIN_REFRESH_TOKEN" />
+                <span className="text-[10px] text-muted-foreground">Verplicht</span>
+              </div>
+            </div>
+            <div className="border-t border-border pt-4 space-y-2">
+              <p className="text-xs font-semibold text-rm-gray">Hoe kom je aan deze keys?</p>
+              <ol className="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside">
+                <li>
+                  Maak een app aan in het{" "}
+                  <a href="https://www.linkedin.com/developers/apps" target="_blank" rel="noopener" className="text-rm-blue hover:underline inline-flex items-center gap-0.5">
+                    LinkedIn Developer Portal <ExternalLink className="w-3 h-3" />
+                  </a>
+                </li>
+                <li>Vraag toegang aan tot de Advertising API (Marketing Developer Platform)</li>
+                <li>Genereer via OAuth2 een refresh token met scope <code className="font-mono text-[10px]">r_ads, r_ads_reporting</code></li>
+                <li>Kopieer alles naar <code className="font-mono">.env.local</code> en herstart de dev server</li>
+              </ol>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Architecture info */}

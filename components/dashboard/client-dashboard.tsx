@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BarChart3, Settings, Calendar, Target, Loader2, AlertTriangle, Wifi, Clock, LayoutGrid, Lightbulb, TrendingUp, FolderOpen, Users, Kanban, ClipboardCheck, FileText, Globe, Megaphone, Briefcase, Layers, Palette } from "lucide-react";
+import { BarChart3, Settings, Calendar, Target, Loader2, AlertTriangle, Wifi, Clock, LayoutGrid, Lightbulb, TrendingUp, FolderOpen, Users, Kanban, ClipboardCheck, FileText, Globe, Megaphone, Briefcase, Layers } from "lucide-react";
 import { countryLabel } from "@/lib/countries";
 import { SyncStatusBadge } from "./sync-status-badge";
 import { getClientSettings } from "@/lib/client-settings";
@@ -43,7 +43,7 @@ interface Client {
   source?: string;
 }
 
-type Tab = "dashboard" | "campaigns" | "forecast" | "insights" | "sprint" | "reporting" | "dgm" | "second-opinion" | "meta" | "linkedin" | "cross-channel" | "branding" | "files" | "settings";
+type Tab = "dashboard" | "campaigns" | "forecast" | "insights" | "sprint" | "reporting" | "dgm" | "second-opinion" | "meta" | "linkedin" | "cross-channel" | "files" | "settings";
 
 function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
   return (
@@ -98,15 +98,14 @@ export function ClientDashboard({ client }: { client: Client }) {
           { id: "dashboard", label: "Dashboard", icon: <BarChart3 className="w-4 h-4" /> },
           { id: "campaigns", label: "Campagnes", icon: <LayoutGrid className="w-4 h-4" /> },
           { id: "forecast", label: "Prognose", icon: <TrendingUp className="w-4 h-4" /> },
-          { id: "insights", label: "Inzichten", icon: <Lightbulb className="w-4 h-4" /> },
+          { id: "insights", label: "Analyses", icon: <Lightbulb className="w-4 h-4" /> },
           { id: "sprint", label: "Sprintplanning", icon: <Kanban className="w-4 h-4" /> },
           { id: "reporting", label: "Rapportage", icon: <FileText className="w-4 h-4" /> },
-          { id: "dgm", label: "DGM", icon: <Users className="w-4 h-4" /> },
+          { id: "dgm", label: "BMS", icon: <Users className="w-4 h-4" /> },
           { id: "second-opinion", label: "Second Opinion", icon: <ClipboardCheck className="w-4 h-4" /> },
           { id: "meta", label: "Meta", icon: <Megaphone className="w-4 h-4" /> },
           { id: "linkedin", label: "LinkedIn", icon: <Briefcase className="w-4 h-4" /> },
           { id: "cross-channel", label: "Cross-channel", icon: <Layers className="w-4 h-4" /> },
-          { id: "branding", label: "Branding", icon: <Palette className="w-4 h-4" /> },
           { id: "files", label: "Bestanden", icon: <FolderOpen className="w-4 h-4" /> },
           { id: "settings", label: "Instellingen", icon: <Settings className="w-4 h-4" /> },
         ] as { id: Tab; label: string; icon: React.ReactNode }[]).map((tab) => (
@@ -251,10 +250,6 @@ export function ClientDashboard({ client }: { client: Client }) {
             <CrossChannelView clientId={client.id} />
           )}
 
-          {activeTab === "branding" && (
-            <BrandingView clientId={client.id} clientName={client.name} />
-          )}
-
           {activeTab === "files" && (
             <ClientFiles
               clientId={client.id}
@@ -265,7 +260,10 @@ export function ClientDashboard({ client }: { client: Client }) {
           )}
 
           {activeTab === "settings" && (
-            <ClientSettingsPanel clientId={client.id} clientName={client.name} />
+            <div className="space-y-6">
+              <ClientSettingsPanel clientId={client.id} clientName={client.name} />
+              <BrandingView clientId={client.id} clientName={client.name} />
+            </div>
           )}
         </AnalysisProvider>
         </ClientDataProvider>
