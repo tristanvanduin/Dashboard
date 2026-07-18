@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { ArrowUpDown, Search, Globe } from "lucide-react";
 import { useClientDataState } from "@/lib/client-data-provider";
+import { matchGeoCloneByCampaignName } from "@/lib/rai/geo-clone-catalog";
 import type { AccountStructureData } from "@/lib/use-client-data";
 import { detectCountryFromName, countryLabel } from "@/lib/countries";
 
@@ -75,11 +76,12 @@ type SortKey = "name" | "spend" | "conversions" | "cpa" | "roas" | "impressions"
 
 interface CampaignTableProps {
   clientId: string;
+  geoClone?: string | null;
   countryFilter?: string | null;
   onCountryFilterChange?: (country: string | null) => void;
 }
 
-export function CampaignTable({ clientId, countryFilter: externalCountryFilter, onCountryFilterChange }: CampaignTableProps) {
+export function CampaignTable({ clientId, geoClone, countryFilter: externalCountryFilter, onCountryFilterChange }: CampaignTableProps) {
   const dataState = useClientDataState();
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("spend");
@@ -160,6 +162,9 @@ export function CampaignTable({ clientId, countryFilter: externalCountryFilter, 
         return c.country === countryFilter;
       });
     }
+    if (geoClone) {
+      result = result.filter((c) => matchGeoCloneByCampaignName(c.name)?.abbreviation === geoClone);
+    }
 
     result.sort((a, b) => {
       let va: number | string, vb: number | string;
@@ -177,7 +182,7 @@ export function CampaignTable({ clientId, countryFilter: externalCountryFilter, 
     });
 
     return result;
-  }, [campaigns, search, purposeFilter, countryFilter, sortBy, sortDir]);
+  }, [campaigns, search, purposeFilter, countryFilter, geoClone, sortBy, sortDir]);
 
   function handleSort(key: SortKey) {
     if (sortBy === key) {
