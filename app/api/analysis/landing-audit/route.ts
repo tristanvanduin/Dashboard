@@ -13,6 +13,7 @@ import { callRouted } from "@/lib/analysis/llm-router";
 import { recordUsage } from "@/lib/analysis/o2-targets-cost";
 import { buildMessageMatchFacts, buildMessageMatchPrompt, MessageMatchSchema, type MessageMatchFacts, type MessageMatchJudgement } from "@/lib/analysis/landing-message-match";
 import { extractPageText } from "@/lib/analysis/page-extract";
+import { saveLandingAuditHypotheses, type LandingAuditItem } from "@/lib/analysis/standalone-to-hypotheses";
 
 const SECTION = "landing_audit_v1";
 const SOP_TYPE = "landing_audit";
@@ -230,6 +231,16 @@ export async function POST(request: NextRequest) {
     },
   });
   if (saveError) return Response.json({ error: "Opslaan mislukt", detail: saveError }, { status: 500 });
+
+  // Voed de goedkeuringswachtrij: prijsafwijkingen en lage match-scores tot één voorstel.
+  const auditItems: LandingAuditItem[] = results.map((r) => ({
+    url: r.url,
+    readable: r.facts?.status === "leesbaar",
+    priceMismatch: r.facts?.status === "leesbaar" ? r.facts.priceMismatch : false,
+    overallScore: r.judgement?.overall_score ?? null,
+    grootsteGap: r.judgement?.grootste_gap ?? null,
+  }));
+  await saveLandingAuditHypotheses(supabase, auditItems, { clientId, analysisId: null });
 
   return Response.json({
     markdown,

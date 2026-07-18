@@ -12,6 +12,7 @@ import { callRouted } from "@/lib/analysis/llm-router";
 import { recordUsage } from "@/lib/analysis/o2-targets-cost";
 import { analyzeBudgetAllocation, type CampaignBudgetInput, type BudgetTarget } from "@/lib/analysis/budget-allocation-facts";
 import { buildBudgetAllocationPrompt } from "@/lib/prompts/budget-allocation-prompt";
+import { saveBudgetAllocationHypotheses } from "@/lib/analysis/standalone-to-hypotheses";
 
 const SECTION = "budget_allocation_v1";
 const SOP_TYPE = "budget_allocation";
@@ -144,6 +145,9 @@ export async function POST(request: NextRequest) {
     },
   });
   if (saveError) return Response.json({ error: "Opslaan mislukt", detail: saveError }, { status: 500 });
+
+  // Voed de goedkeuringswachtrij: aggregeer de op/af-schaal-adviezen tot één voorstel.
+  await saveBudgetAllocationHypotheses(supabase, { summary, scaleUp, scaleDown }, { clientId, analysisId: null });
 
   return Response.json({ analysis: response.output, summary, scaleUp, scaleDown, campaigns: facts });
 }
