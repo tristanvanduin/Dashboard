@@ -10,6 +10,7 @@ import {
 } from "@/lib/api/google-ads";
 import { buildSearchTermAnalysisPrompt } from "@/lib/prompts/search-term-prompts";
 import { callRouted } from "@/lib/analysis/llm-router";
+import { recordUsage } from "@/lib/analysis/o2-targets-cost";
 import {
   getSupabase,
   getOpenRouterKey,
@@ -337,6 +338,23 @@ ${JSON.stringify(termsJson, null, 2)}`;
           maxTokens: 8192,
           label: `search-terms-batch-${batchNum}`,
         });
+
+        // W1.1(f): O2-kostenregistratie per batch-call. Elke callRouted is een echte kost
+        // (ook een retry), dus registreren we hier per call. Synthetische run-sleutel, want
+        // een losse analyse heeft geen jobId. Nooit brekend: recordUsage slikt fouten zelf.
+        if (supabase) {
+          void recordUsage(supabase, {
+            runKey: `search-terms-${clientId}-${analysisDate}`,
+            clientId,
+            channel: "google_ads",
+            sopType: "search_terms",
+            stepLabel: `Search terms batch ${batchNum}`,
+            model: response.model,
+            promptTokens: response.promptTokens ?? 0,
+            completionTokens: response.completionTokens ?? 0,
+          });
+        }
+
         const rawOutput = fixMojibake(response.output);
 
         // Parse with Zod validation (partial recovery)
