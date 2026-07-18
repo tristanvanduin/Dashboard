@@ -4,10 +4,11 @@
 -- entity_id (meta daily), entity_urn (linkedin daily), conversions_value (Google, meervoud)
 -- versus conversion_value (Meta en LinkedIn, enkelvoud). Mismatch = view-fout, geen dataschade.
 -- 012 (X1): blended maandview over de kanalen heen.
--- LET OP: pas uitvoeren tijdens X1, NA verificatie van de kolomnamen van ads_account_monthly
--- (Google draait op maand-grein; Meta en LinkedIn worden hier vanaf dag-grein geaggregeerd).
--- De TODO-markeringen hieronder MOETEN vervangen worden door de echte kolomnamen uit de
--- bestaande Google-tabellen voordat deze file draait. Mismatch = view-fout, geen dataschade.
+-- LET OP: pas uitvoeren tijdens X1 (Google draait op maand-grein; Meta en LinkedIn worden
+-- hier vanaf dag-grein geaggregeerd). De fase-poort is een bewuste ontwerpkeuze, geen bug.
+-- KOLOMNAMEN GEVERIFIEERD tegen het live schema van ads_account_monthly: month, impressions,
+-- clicks, cost, conversions, conversions_value. De Google-tak heet conversions_value (meervoud)
+-- en wordt als conversion_value gealiast zodat de UNION-kolomnamen kloppen met Meta/LinkedIn.
 --
 -- Spelregel voor de UI (X1): bedragen alleen optellen over kanalen met GELIJKE valuta;
 -- anders per valuta groeperen. Elk kanaal meet bovendien zijn eigen attributie, dus de
@@ -16,14 +17,14 @@
 create or replace view blended_account_monthly as
 select
   client_id,
-  month,                                   -- TODO: verifieer kolomnaam (maand-kolom in ads_account_monthly)
+  month,                                   -- geverifieerd: maand-kolom in ads_account_monthly
   'google_ads'::text  as channel,
-  null::text          as currency,         -- TODO: valuta-bron voor Google bevestigen of hardcoden per account
-  impressions,                             -- TODO: verifieer kolomnaam
-  clicks,                                  -- TODO: verifieer kolomnaam
-  cost                as spend,            -- TODO: verifieer kolomnaam (cost of spend)
-  conversions,                             -- TODO: verifieer kolomnaam
-  conversion_value,                        -- TODO: verifieer kolomnaam
+  null::text          as currency,         -- Google-valuta staat niet in ads_account_monthly; bewust null (per-account bepalen in de UI)
+  impressions,                             -- geverifieerd
+  clicks,                                  -- geverifieerd
+  cost                as spend,            -- geverifieerd: kolom heet cost
+  conversions,                             -- geverifieerd
+  conversions_value   as conversion_value, -- geverifieerd: Google-kolom heet conversions_value (meervoud), gealiast voor de UNION
   null::numeric       as leads
 from ads_account_monthly
 
