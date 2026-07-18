@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS sop_client_context (
 );
 
 ALTER TABLE sop_client_context ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_all" ON sop_client_context;
 CREATE POLICY "service_role_all" ON sop_client_context FOR ALL USING (auth.role() = 'service_role');
+DROP POLICY IF EXISTS "auth_read" ON sop_client_context;
 CREATE POLICY "auth_read" ON sop_client_context FOR SELECT USING (auth.role() = 'authenticated');
 CREATE INDEX IF NOT EXISTS idx_scc_client ON sop_client_context(client_id);
 
@@ -46,7 +48,9 @@ CREATE TABLE IF NOT EXISTS ads_portfolio_analysis (
 );
 
 ALTER TABLE ads_portfolio_analysis ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_all" ON ads_portfolio_analysis;
 CREATE POLICY "service_role_all" ON ads_portfolio_analysis FOR ALL USING (auth.role() = 'service_role');
+DROP POLICY IF EXISTS "auth_read" ON ads_portfolio_analysis;
 CREATE POLICY "auth_read" ON ads_portfolio_analysis FOR SELECT USING (auth.role() = 'authenticated');
 CREATE INDEX IF NOT EXISTS idx_apa_client ON ads_portfolio_analysis(client_id);
 
@@ -69,7 +73,9 @@ CREATE TABLE IF NOT EXISTS sop_hypothesis_tracking (
 );
 
 ALTER TABLE sop_hypothesis_tracking ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_all" ON sop_hypothesis_tracking;
 CREATE POLICY "service_role_all" ON sop_hypothesis_tracking FOR ALL USING (auth.role() = 'service_role');
+DROP POLICY IF EXISTS "auth_read" ON sop_hypothesis_tracking;
 CREATE POLICY "auth_read" ON sop_hypothesis_tracking FOR SELECT USING (auth.role() = 'authenticated');
 CREATE INDEX IF NOT EXISTS idx_sht_client ON sop_hypothesis_tracking(client_id);
 
@@ -96,7 +102,9 @@ CREATE TABLE IF NOT EXISTS ads_leading_indicators (
 );
 
 ALTER TABLE ads_leading_indicators ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_all" ON ads_leading_indicators;
 CREATE POLICY "service_role_all" ON ads_leading_indicators FOR ALL USING (auth.role() = 'service_role');
+DROP POLICY IF EXISTS "auth_read" ON ads_leading_indicators;
 CREATE POLICY "auth_read" ON ads_leading_indicators FOR SELECT USING (auth.role() = 'authenticated');
 CREATE INDEX IF NOT EXISTS idx_ali_client ON ads_leading_indicators(client_id);
 
@@ -116,7 +124,9 @@ CREATE TABLE IF NOT EXISTS benchmark_sectors (
 );
 
 ALTER TABLE benchmark_sectors ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_all" ON benchmark_sectors;
 CREATE POLICY "service_role_all" ON benchmark_sectors FOR ALL USING (auth.role() = 'service_role');
+DROP POLICY IF EXISTS "auth_read" ON benchmark_sectors;
 CREATE POLICY "auth_read" ON benchmark_sectors FOR SELECT USING (auth.role() = 'authenticated');
 
 -- Seed benchmark data
