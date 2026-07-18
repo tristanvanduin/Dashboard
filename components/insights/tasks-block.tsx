@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { CheckCircle2, Circle, Clock, CalendarDays, CalendarRange, Zap } from "lucide-react";
+import { CheckCircle2, Circle, Clock, CalendarDays, CalendarRange, Zap, ChevronDown, ChevronRight } from "lucide-react";
 import { useClientHistoricalData } from "@/lib/client-data-provider";
 import { computeForecast, type ClientForecast } from "@/lib/forecast";
 import { getClientSettings } from "@/lib/client-settings";
@@ -267,6 +267,13 @@ export function TasksBlock({ clientId, selectedInsightId, refreshKey }: { client
   const [tasks, setTasks] = useState<Task[]>(() => loadTasks(clientId, "actions", dynamicTasks));
   const [aiTasks, setAiTasks] = useState<AiTask[]>([]);
   const [aiTasksLoading, setAiTasksLoading] = useState(false);
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string) =>
+    setExpandedTasks((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
 
   useEffect(() => {
     setTasks(loadTasks(clientId, cadence, dynamicTasks));
@@ -435,18 +442,25 @@ export function TasksBlock({ clientId, selectedInsightId, refreshKey }: { client
             AI Analyse taken ({filteredAiTasks.length}{selectedInsightId ? " gefilterd" : ""})
           </p>
           <div className="space-y-1.5">
-            {filteredAiTasks.map((at) => (
+            {filteredAiTasks.map((at) => {
+              const isOpen = expandedTasks.has(at.id);
+              return (
               <div
                 key={at.id}
-                className={`flex items-start gap-3 p-2.5 rounded-lg border ${PRIORITY_COLORS[at.priority] ?? "border-border"}`}
+                className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${PRIORITY_COLORS[at.priority] ?? "border-border"}`}
               >
-                <button onClick={() => markAiTaskDone(at.id)} className="shrink-0 mt-0.5">
+                <button onClick={() => markAiTaskDone(at.id)} className="shrink-0 mt-0.5" title="Markeer als afgerond">
                   <Circle className="w-4.5 h-4.5 text-gray-300 hover:text-green-500 transition-colors" />
                 </button>
                 <div className="min-w-0 flex-1">
-                  <span className="text-sm font-medium text-rm-gray block">{at.title}</span>
-                  <span className="text-xs text-muted-foreground block mt-0.5">{at.description}</span>
-                  <div className="flex items-center gap-2 mt-1.5">
+                  <button onClick={() => toggleExpanded(at.id)} className="flex items-start gap-1.5 w-full text-left group">
+                    {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />}
+                    <span className={`text-sm font-medium text-rm-gray flex-1 group-hover:text-rm-blue ${isOpen ? "" : "truncate"}`}>{at.title}</span>
+                  </button>
+                  {isOpen && (
+                    <span className="text-xs text-muted-foreground block mt-1 ml-5">{at.description}</span>
+                  )}
+                  <div className="flex items-center gap-2 mt-1.5 ml-5">
                     <span className={`text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded ${PRIORITY_COLORS[at.priority] ?? ""}`}>
                       {at.priority}
                     </span>
@@ -466,7 +480,8 @@ export function TasksBlock({ clientId, selectedInsightId, refreshKey }: { client
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
         ) : null;
