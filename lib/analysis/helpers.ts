@@ -25,10 +25,12 @@ export function getSupabase(): SupabaseClient | null {
   return createClient(url, key);
 }
 
-// ── OpenRouter config ───────────────────────────────────────────────────────
-
+// ── LLM API-key ───────────────────────────────────────────────────────────
+// Prefereert GEMINI_API_KEY (directe Gemini-endpoint); valt terug op OPENROUTER_API_KEY
+// zodat een oude configuratie blijft werken. De naam blijft getOpenRouterKey voor de
+// bestaande callsites; hij levert simpelweg de actieve LLM-sleutel.
 export function getOpenRouterKey(): string | null {
-  return process.env.OPENROUTER_API_KEY ?? null;
+  return process.env.GEMINI_API_KEY ?? process.env.OPENROUTER_API_KEY ?? null;
 }
 
 // ── Goals + account type from client_settings or sop_client_config ──────────

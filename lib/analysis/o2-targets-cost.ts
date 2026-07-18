@@ -111,10 +111,10 @@ export const MODEL_PRICES: Record<string, { inputPer1M: number; outputPer1M: num
   // W1.1e: vul hier de ACTUELE OpenRouter-prijzen in (per 1M tokens) en noteer de datum
   // in het fase-rapport. Dit is de ENIGE prijsplek (no-go: nergens anders hardcoden).
   // Zonder ingevulde prijs blijft cost_eur null; het totaal is dan expliciet partieel.
-  // De modellen die de router nu gebruikt:
-  // "google/gemini-3-flash-preview": { inputPer1M: 0, outputPer1M: 0 },
-  // "google/gemini-3-flash-lite-preview": { inputPer1M: 0, outputPer1M: 0 },
-  // "openai/gpt-4o-mini": { inputPer1M: 0, outputPer1M: 0 },
+  // De modellen die de router nu gebruikt (directe Gemini-endpoint):
+  // "gemini-3-flash-preview": { inputPer1M: 0, outputPer1M: 0 },
+  // "gemini-flash-lite-latest": { inputPer1M: 0, outputPer1M: 0 },
+  // "gemini-2.5-flash": { inputPer1M: 0, outputPer1M: 0 },
 };
 
 /**

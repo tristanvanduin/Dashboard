@@ -9,8 +9,11 @@ import { sanitizeLLMPayload } from "../security/sanitize-llm-payload";
 import { classifyLLMError, type LLMErrorClassification } from "./llm-error";
 import { logger } from "@/lib/logger";
 
-const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
-const DEFAULT_MODEL = "google/gemini-3-flash-preview";
+// LLM-endpoint. Default: Google's OpenAI-compatibele Gemini-endpoint (zelfde chat-completions-
+// formaat als OpenRouter, dus de client hieronder blijft ongewijzigd). Override via LLM_BASE_URL
+// als je terug wilt naar OpenRouter of een andere OpenAI-compatibele provider.
+const OPENROUTER_BASE = process.env.LLM_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai";
+const DEFAULT_MODEL = "gemini-3-flash-preview";
 const DEFAULT_MAX_TOKENS = 8192;
 const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes
 const MAX_RETRIES = 2;
