@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BarChart3, Settings, Calendar, Target, Loader2, AlertTriangle, Wifi, Clock, LayoutGrid, Lightbulb, TrendingUp, FolderOpen, Users, Kanban, ClipboardCheck, FileText, Globe } from "lucide-react";
+import { BarChart3, Settings, Calendar, Target, Loader2, AlertTriangle, Wifi, Clock, LayoutGrid, Lightbulb, TrendingUp, FolderOpen, Users, Kanban, ClipboardCheck, FileText, Globe, Megaphone, Briefcase, Layers, Palette } from "lucide-react";
 import { countryLabel } from "@/lib/countries";
 import { SyncStatusBadge } from "./sync-status-badge";
 import { getClientSettings } from "@/lib/client-settings";
@@ -15,6 +15,7 @@ import { RecommendationsBlock } from "../insights/recommendations-block";
 import { TasksBlock } from "../insights/tasks-block";
 import { TaskImpactReminder } from "../insights/task-impact-reminder";
 import { SopTriggerButtons, type SopError } from "../insights/sop-trigger-buttons";
+import { StandaloneAnalyses } from "../insights/standalone-analyses";
 import { HypothesesBlock } from "../insights/hypotheses-block";
 import { SprintPlanning } from "../insights/sprint-planning";
 import { CampaignTable } from "./campaign-table";
@@ -26,6 +27,10 @@ import { ClientNotes } from "./client-notes";
 import { ForecastTable } from "./forecast-table";
 import { ClientFiles } from "./client-files";
 import { DgmView } from "./dgm-view";
+import { MetaView } from "./meta-view";
+import { LinkedInView } from "./linkedin-view";
+import { CrossChannelView } from "./cross-channel-view";
+import { BrandingView } from "./branding-view";
 import { TrackingAlert } from "./tracking-alert";
 import { ClientReporting } from "./client-reporting";
 import { useClientData } from "@/lib/use-client-data";
@@ -38,7 +43,7 @@ interface Client {
   source?: string;
 }
 
-type Tab = "dashboard" | "campaigns" | "forecast" | "insights" | "sprint" | "reporting" | "dgm" | "second-opinion" | "files" | "settings";
+type Tab = "dashboard" | "campaigns" | "forecast" | "insights" | "sprint" | "reporting" | "dgm" | "second-opinion" | "meta" | "linkedin" | "cross-channel" | "branding" | "files" | "settings";
 
 function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
   return (
@@ -98,6 +103,10 @@ export function ClientDashboard({ client }: { client: Client }) {
           { id: "reporting", label: "Rapportage", icon: <FileText className="w-4 h-4" /> },
           { id: "dgm", label: "DGM", icon: <Users className="w-4 h-4" /> },
           { id: "second-opinion", label: "Second Opinion", icon: <ClipboardCheck className="w-4 h-4" /> },
+          { id: "meta", label: "Meta", icon: <Megaphone className="w-4 h-4" /> },
+          { id: "linkedin", label: "LinkedIn", icon: <Briefcase className="w-4 h-4" /> },
+          { id: "cross-channel", label: "Cross-channel", icon: <Layers className="w-4 h-4" /> },
+          { id: "branding", label: "Branding", icon: <Palette className="w-4 h-4" /> },
           { id: "files", label: "Bestanden", icon: <FolderOpen className="w-4 h-4" /> },
           { id: "settings", label: "Instellingen", icon: <Settings className="w-4 h-4" /> },
         ] as { id: Tab; label: string; icon: React.ReactNode }[]).map((tab) => (
@@ -230,6 +239,22 @@ export function ClientDashboard({ client }: { client: Client }) {
             <SecondOpinionView clientId={client.id} clientName={client.name} />
           )}
 
+          {activeTab === "meta" && (
+            <MetaView clientId={client.id} />
+          )}
+
+          {activeTab === "linkedin" && (
+            <LinkedInView clientId={client.id} />
+          )}
+
+          {activeTab === "cross-channel" && (
+            <CrossChannelView clientId={client.id} />
+          )}
+
+          {activeTab === "branding" && (
+            <BrandingView clientId={client.id} clientName={client.name} />
+          )}
+
           {activeTab === "files" && (
             <ClientFiles
               clientId={client.id}
@@ -260,6 +285,7 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
         onAnalysisComplete={() => setRefreshKey((k) => k + 1)}
         onAnalysisError={onSopError}
       />
+      <StandaloneAnalyses clientId={clientId} />
       <TaskImpactReminder clientId={clientId} />
       <InsightsBlock
         clientId={clientId}
