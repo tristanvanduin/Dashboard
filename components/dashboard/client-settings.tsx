@@ -276,6 +276,63 @@ export function ClientSettingsPanel({ clientId, clientName }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* ── KPI Doelstellingen (bovenaan: waar stuurt de klant op) ── */}
+      <div className="bg-white rounded-xl border border-border p-6 shadow-sm">
+        <div className="flex items-center gap-2 mb-1">
+          <BarChart3 className="w-5 h-5 text-rm-blue" />
+          <h2 className="text-base font-semibold text-rm-blue">KPI Doelstellingen</h2>
+        </div>
+        <p className="text-sm text-muted-foreground mb-5">
+          Activeer de KPIs waar deze klant op stuurt. Vul alleen in wat relevant is.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <KpiCard
+            label="Conversies"
+            icon={<Target className="w-4 h-4" />}
+            config={kpiConversions}
+            onChange={(c) => { setKpiConversions(c); setSaved(false); }}
+            periodOptions
+            allowGrowthMode
+            format={(v) => v.toLocaleString("nl-NL")}
+            placeholder="bijv. 5000"
+          />
+          <KpiCard
+            label="Omzet"
+            icon={<DollarSign className="w-4 h-4" />}
+            config={kpiRevenue}
+            onChange={(c) => { setKpiRevenue(c); setSaved(false); }}
+            periodOptions
+            allowGrowthMode
+            prefix="€"
+            format={(v) => new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", minimumFractionDigits: 0 }).format(v)}
+            placeholder="bijv. 150000"
+          />
+          <KpiCard
+            label="ROAS"
+            icon={<TrendingUp className="w-4 h-4" />}
+            config={kpiRoas}
+            onChange={(c) => { setKpiRoas(c); setSaved(false); }}
+            suffix="x"
+            step={0.1}
+            format={(v) => `${v.toFixed(1)}x`}
+            placeholder="bijv. 5.0"
+            description="Minimale return on ad spend"
+          />
+          <KpiCard
+            label="CPA"
+            icon={<DollarSign className="w-4 h-4" />}
+            config={kpiCpa}
+            onChange={(c) => { setKpiCpa(c); setSaved(false); }}
+            prefix="€"
+            step={0.5}
+            format={(v) => new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", minimumFractionDigits: 2 }).format(v)}
+            placeholder="bijv. 18.50"
+            description="Maximale cost per conversie"
+          />
+        </div>
+      </div>
+
       {/* ── Conversion Actions ── */}
       <div className="bg-white rounded-xl border border-border p-6 shadow-sm">
         <div className="flex items-center justify-between mb-1">
@@ -365,63 +422,6 @@ export function ClientSettingsPanel({ clientId, clientName }: Props) {
               </button>
             </div>
           ))}
-        </div>
-      </div>
-
-      {/* ── KPI Doelstellingen ── */}
-      <div className="bg-white rounded-xl border border-border p-6 shadow-sm">
-        <div className="flex items-center gap-2 mb-1">
-          <BarChart3 className="w-5 h-5 text-rm-blue" />
-          <h2 className="text-base font-semibold text-rm-blue">KPI Doelstellingen</h2>
-        </div>
-        <p className="text-sm text-muted-foreground mb-5">
-          Activeer de KPIs waar deze klant op stuurt. Vul alleen in wat relevant is.
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <KpiCard
-            label="Conversies"
-            icon={<Target className="w-4 h-4" />}
-            config={kpiConversions}
-            onChange={(c) => { setKpiConversions(c); setSaved(false); }}
-            periodOptions
-            allowGrowthMode
-            format={(v) => v.toLocaleString("nl-NL")}
-            placeholder="bijv. 5000"
-          />
-          <KpiCard
-            label="Omzet"
-            icon={<DollarSign className="w-4 h-4" />}
-            config={kpiRevenue}
-            onChange={(c) => { setKpiRevenue(c); setSaved(false); }}
-            periodOptions
-            allowGrowthMode
-            prefix="€"
-            format={(v) => new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", minimumFractionDigits: 0 }).format(v)}
-            placeholder="bijv. 150000"
-          />
-          <KpiCard
-            label="ROAS"
-            icon={<TrendingUp className="w-4 h-4" />}
-            config={kpiRoas}
-            onChange={(c) => { setKpiRoas(c); setSaved(false); }}
-            suffix="x"
-            step={0.1}
-            format={(v) => `${v.toFixed(1)}x`}
-            placeholder="bijv. 5.0"
-            description="Minimale return on ad spend"
-          />
-          <KpiCard
-            label="CPA"
-            icon={<DollarSign className="w-4 h-4" />}
-            config={kpiCpa}
-            onChange={(c) => { setKpiCpa(c); setSaved(false); }}
-            prefix="€"
-            step={0.5}
-            format={(v) => new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", minimumFractionDigits: 2 }).format(v)}
-            placeholder="bijv. 18.50"
-            description="Maximale cost per conversie"
-          />
         </div>
       </div>
 
