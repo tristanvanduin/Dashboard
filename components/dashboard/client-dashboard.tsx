@@ -43,7 +43,7 @@ interface Client {
   source?: string;
 }
 
-type Tab = "dashboard" | "campaigns" | "forecast" | "insights" | "sprint" | "reporting" | "dgm" | "second-opinion" | "meta" | "linkedin" | "cross-channel" | "files" | "settings";
+type Tab = "dashboard" | "campaigns" | "forecast" | "insights" | "sprint" | "reporting" | "dgm" | "second-opinion" | "files" | "settings";
 
 function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
   return (
@@ -59,8 +59,37 @@ function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title
   );
 }
 
+type Channel = "google" | "meta" | "linkedin" | "blended";
+
+const CHANNELS: { id: Channel; label: string; icon: React.ReactNode }[] = [
+  { id: "google", label: "Google Ads", icon: <BarChart3 className="w-3.5 h-3.5" /> },
+  { id: "meta", label: "Meta", icon: <Megaphone className="w-3.5 h-3.5" /> },
+  { id: "linkedin", label: "LinkedIn", icon: <Briefcase className="w-3.5 h-3.5" /> },
+  { id: "blended", label: "Alle kanalen", icon: <Layers className="w-3.5 h-3.5" /> },
+];
+
+function ChannelTabs({ channel, onChange }: { channel: Channel; onChange: (c: Channel) => void }) {
+  return (
+    <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+      {CHANNELS.map((c) => (
+        <button
+          key={c.id}
+          onClick={() => onChange(c.id)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+            channel === c.id ? "bg-white text-rm-blue shadow-sm" : "text-muted-foreground hover:text-rm-gray"
+          }`}
+        >
+          {c.icon}
+          {c.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function ClientDashboard({ client }: { client: Client }) {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const [channel, setChannel] = useState<Channel>("google");
   const [sopErrors, setSopErrors] = useState<SopError[]>([]);
   const clientData = useClientData(client.id);
   const [lagDays, setLagDays] = useState<number>(3);
@@ -95,7 +124,7 @@ export function ClientDashboard({ client }: { client: Client }) {
       {/* Tab navigation */}
       <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
         {([
-          { id: "dashboard", label: "Dashboard", icon: <BarChart3 className="w-4 h-4" /> },
+          { id: "dashboard", label: "Overzicht", icon: <BarChart3 className="w-4 h-4" /> },
           { id: "campaigns", label: "Campagnes", icon: <LayoutGrid className="w-4 h-4" /> },
           { id: "forecast", label: "Prognose", icon: <TrendingUp className="w-4 h-4" /> },
           { id: "insights", label: "Analyses", icon: <Lightbulb className="w-4 h-4" /> },
@@ -103,9 +132,6 @@ export function ClientDashboard({ client }: { client: Client }) {
           { id: "reporting", label: "Rapportage", icon: <FileText className="w-4 h-4" /> },
           { id: "dgm", label: "BMS", icon: <Users className="w-4 h-4" /> },
           { id: "second-opinion", label: "Second Opinion", icon: <ClipboardCheck className="w-4 h-4" /> },
-          { id: "meta", label: "Meta", icon: <Megaphone className="w-4 h-4" /> },
-          { id: "linkedin", label: "LinkedIn", icon: <Briefcase className="w-4 h-4" /> },
-          { id: "cross-channel", label: "Cross-channel", icon: <Layers className="w-4 h-4" /> },
           { id: "files", label: "Bestanden", icon: <FolderOpen className="w-4 h-4" /> },
           { id: "settings", label: "Instellingen", icon: <Settings className="w-4 h-4" /> },
         ] as { id: Tab; label: string; icon: React.ReactNode }[]).map((tab) => (
@@ -153,7 +179,13 @@ export function ClientDashboard({ client }: { client: Client }) {
           <TrackingAlert clientId={client.id} onNavigateToSettings={() => setActiveTab("settings")} />
 
           {activeTab === "dashboard" && (
-            <>
+            <div className="space-y-6">
+              <ChannelTabs channel={channel} onChange={setChannel} />
+              {channel === "meta" && <MetaView clientId={client.id} />}
+              {channel === "linkedin" && <LinkedInView clientId={client.id} />}
+              {channel === "blended" && <CrossChannelView clientId={client.id} />}
+              {channel === "google" && (
+              <>
               <HealthBadge clientId={client.id} />
 
               {/* Country filter for dashboard (only if multi-country) */}
@@ -201,18 +233,37 @@ export function ClientDashboard({ client }: { client: Client }) {
 
               <PerformanceChart clientId={client.id} countryFilter={countryFilter} />
               <ClientNotes clientId={client.id} />
-            </>
+              </>
+              )}
+            </div>
           )}
 
           {activeTab === "campaigns" && (
             <div className="space-y-6">
-              <CampaignTable clientId={client.id} countryFilter={countryFilter} onCountryFilterChange={setCountryFilter} />
-              <SearchTermsTable clientId={client.id} countryFilter={countryFilter} />
+              <ChannelTabs channel={channel} onChange={setChannel} />
+              {channel === "google" && (
+                <div className="space-y-6">
+                  <CampaignTable clientId={client.id} countryFilter={countryFilter} onCountryFilterChange={setCountryFilter} />
+                  <SearchTermsTable clientId={client.id} countryFilter={countryFilter} />
+                </div>
+              )}
+              {channel === "meta" && <MetaView clientId={client.id} />}
+              {channel === "linkedin" && <LinkedInView clientId={client.id} />}
+              {channel === "blended" && <CrossChannelView clientId={client.id} />}
             </div>
           )}
 
           {activeTab === "forecast" && (
-            <ForecastTable clientId={client.id} />
+            <div className="space-y-6">
+              <ChannelTabs channel={channel} onChange={setChannel} />
+              {channel === "google" && <ForecastTable clientId={client.id} />}
+              {channel === "blended" && <CrossChannelView clientId={client.id} />}
+              {(channel === "meta" || channel === "linkedin") && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
+                  Prognose voor {channel === "meta" ? "Meta" : "LinkedIn"} volgt zodra de sync en de kanaal-analyse-laag live zijn.
+                </div>
+              )}
+            </div>
           )}
 
           {activeTab === "insights" && (
@@ -236,18 +287,6 @@ export function ClientDashboard({ client }: { client: Client }) {
 
           {activeTab === "second-opinion" && (
             <SecondOpinionView clientId={client.id} clientName={client.name} />
-          )}
-
-          {activeTab === "meta" && (
-            <MetaView clientId={client.id} />
-          )}
-
-          {activeTab === "linkedin" && (
-            <LinkedInView clientId={client.id} />
-          )}
-
-          {activeTab === "cross-channel" && (
-            <CrossChannelView clientId={client.id} />
           )}
 
           {activeTab === "files" && (
