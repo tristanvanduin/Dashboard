@@ -16,12 +16,14 @@ import {
   type OpenRouterResponse,
 } from "./openrouter-client";
 
-// Model-catalogus. STRONG is het huidige model. Bevestig de exacte strings voor cheap en
-// crossFallback tegen het OpenRouter-aanbod van jullie account.
+// Model-catalogus. Model-ID's van de directe Gemini-endpoint (zonder google/-prefix). De
+// fallback is bewust OOK een Gemini-model, zodat een fout nooit terugvalt op een betaald
+// account bij een andere provider. Bevestig de exacte strings tegen het Gemini-aanbod van
+// jullie key (models.list).
 export const MODEL_CATALOG = {
-  strong: "google/gemini-3-flash-preview",
-  cheap: "google/gemini-3-flash-lite-preview",
-  crossFallback: "openai/gpt-4o-mini",
+  strong: "gemini-3-flash-preview",
+  cheap: "gemini-flash-lite-latest",
+  crossFallback: "gemini-2.5-flash",
 } as const;
 
 export type Tier = "heavy" | "medium" | "light";
