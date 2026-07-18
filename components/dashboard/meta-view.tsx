@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Loader2, Megaphone, AlertCircle, CheckCircle2 } from "lucide-react";
+import { SignalAnalysisCard } from "./signal-analysis-card";
 
 // Meta Ads-tab. Toont de connectiestatus en de structuur van wat dit kanaal levert. Zonder
 // gekoppelde Meta-credentials of gesyncte data blijft dit een eerlijke lege staat; de kopjes
@@ -109,6 +110,14 @@ export function MetaView({ clientId }: { clientId: string }) {
           })}
         </div>
       </div>
+
+      {/* Deterministische signaal-detectie: fatigue, frequency-saturatie, rankings, hook/hold. */}
+      <SignalAnalysisCard
+        clientId={clientId}
+        endpoint="/api/analysis/meta-signals"
+        title="Meta-signalen"
+        description="Deterministische detectie: creative fatigue, frequency-saturatie, ranking-zwakte, hook/hold. Voedt de goedkeuringswachtrij."
+      />
     </div>
   );
 }
