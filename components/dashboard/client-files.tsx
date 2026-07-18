@@ -213,7 +213,7 @@ function FileIcon({ contentType, fileName }: { contentType: string | null; fileN
 }
 
 // Default folders for new clients
-const DEFAULT_FOLDERS = ["SOP's", "Sprintplanning", "Rapportages", "Overig"];
+const DEFAULT_FOLDERS = ["SOP's", "Briefings", "Sprintplanning", "Rapportages", "Overig"];
 
 export function ClientFiles({ clientId, sopErrors, onDismissError, onDismissAllErrors }: {
   clientId: string;
