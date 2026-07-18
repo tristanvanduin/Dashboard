@@ -32,6 +32,7 @@ import { LinkedInView } from "./linkedin-view";
 import { CrossChannelView } from "./cross-channel-view";
 import { BrandingView } from "./branding-view";
 import { EventSettings } from "./event-settings";
+import { GeoCloneScope } from "./geo-clone-scope";
 import { TrackingAlert } from "./tracking-alert";
 import { ClientReporting } from "./client-reporting";
 import { useClientData } from "@/lib/use-client-data";
@@ -91,6 +92,7 @@ function ChannelTabs({ channel, onChange }: { channel: Channel; onChange: (c: Ch
 export function ClientDashboard({ client }: { client: Client }) {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [channel, setChannel] = useState<Channel>("google");
+  const [geoClone, setGeoClone] = useState<string | null>(null);
   const [sopErrors, setSopErrors] = useState<SopError[]>([]);
   const clientData = useClientData(client.id);
   const [lagDays, setLagDays] = useState<number>(3);
@@ -179,6 +181,8 @@ export function ClientDashboard({ client }: { client: Client }) {
         <AnalysisProvider>
           <TrackingAlert clientId={client.id} onNavigateToSettings={() => setActiveTab("settings")} />
 
+          <GeoCloneScope value={geoClone} onChange={setGeoClone} />
+
           {activeTab === "dashboard" && (
             <div className="space-y-6">
               <ChannelTabs channel={channel} onChange={setChannel} />
@@ -244,7 +248,7 @@ export function ClientDashboard({ client }: { client: Client }) {
               <ChannelTabs channel={channel} onChange={setChannel} />
               {channel === "google" && (
                 <div className="space-y-6">
-                  <CampaignTable clientId={client.id} countryFilter={countryFilter} onCountryFilterChange={setCountryFilter} />
+                  <CampaignTable clientId={client.id} geoClone={geoClone} countryFilter={countryFilter} onCountryFilterChange={setCountryFilter} />
                   <SearchTermsTable clientId={client.id} countryFilter={countryFilter} />
                 </div>
               )}

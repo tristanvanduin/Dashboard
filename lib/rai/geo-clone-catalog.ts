@@ -26,7 +26,7 @@ export const RAI_GEO_CLONES: GeoCloneVariant[] = [
   { brand: "Aquatech", location: "Mexico", abbreviation: "AQM", confirmed: true, cadence: "annual" },
   { brand: "Aquatech", location: "China", abbreviation: "AQC", confirmed: false, cadence: "annual" },
   // Interclean (professioneel schoonmaak)
-  { brand: "Interclean", location: "Amsterdam", abbreviation: "ICA", confirmed: false, cadence: "biennial" },
+  { brand: "Interclean", location: "Amsterdam", abbreviation: "ICA", confirmed: true, cadence: "biennial" },
   { brand: "Interclean", location: "China", abbreviation: "ICC", confirmed: true, cadence: "annual" },
   // Intertraffic (verkeerstechnologie)
   { brand: "Intertraffic", location: "Amsterdam", abbreviation: "ITA", confirmed: false, cadence: "biennial" },
@@ -35,9 +35,9 @@ export const RAI_GEO_CLONES: GeoCloneVariant[] = [
   { brand: "Intertraffic", location: "Istanbul", abbreviation: "ITI", confirmed: false, cadence: "biennial" },
   { brand: "Intertraffic", location: "Asia", abbreviation: "ITB", confirmed: false, cadence: "custom" },
   // GreenTech (tuinbouwtechnologie)
-  { brand: "GreenTech", location: "Amsterdam", abbreviation: "GTA", confirmed: false, cadence: "annual" },
-  { brand: "GreenTech", location: "Americas", abbreviation: "GTAM", confirmed: false, cadence: "custom" },
-  { brand: "GreenTech", location: "North America", abbreviation: "GTNA", confirmed: false, cadence: "custom" },
+  { brand: "GreenTech", location: "Amsterdam", abbreviation: "GRT", confirmed: true, cadence: "annual" },
+  { brand: "GreenTech", location: "Americas", abbreviation: "GRA", confirmed: true, cadence: "custom" },
+  { brand: "GreenTech", location: "North America", abbreviation: "GRN", confirmed: true, cadence: "custom" },
   // Overwegend Amsterdam of nationaal (een variant; afkortingen te bevestigen)
   { brand: "METSTRADE", location: "Amsterdam", abbreviation: "MET", confirmed: false, cadence: "annual" },
   { brand: "Rematec", location: "Amsterdam", abbreviation: "REM", confirmed: false, cadence: "biennial" },

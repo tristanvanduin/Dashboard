@@ -23,11 +23,13 @@ assert(aqm?.brand === "Aquatech" && aqm.location === "Mexico" && aqm.confirmed, 
 const icc = matchGeoCloneByCampaignName("ICC_Display");
 assert(icc?.brand === "Interclean" && icc.location === "China" && icc.confirmed, "ICC koppelt aan Interclean China (bevestigd)");
 
-// ── Langste afkorting wint bij overlap (GTAM boven GTA) ──
-const gtam = matchGeoCloneByCampaignName("GTAM | Search");
-assert(gtam?.location === "Americas", "GTAM koppelt aan GreenTech Americas, niet aan GTA Amsterdam");
-const gta = matchGeoCloneByCampaignName("GTA | Search");
-assert(gta?.location === "Amsterdam", "GTA koppelt aan GreenTech Amsterdam");
+// ── GreenTech geo-clones (afkortingen bevestigd: GRT/GRA/GRN) ──
+const gra = matchGeoCloneByCampaignName("GRA | Search");
+assert(gra?.brand === "GreenTech" && gra.location === "Americas" && gra.confirmed, "GRA koppelt aan GreenTech Americas (bevestigd)");
+const grt = matchGeoCloneByCampaignName("GRT | Search");
+assert(grt?.location === "Amsterdam", "GRT koppelt aan GreenTech Amsterdam");
+const grn = matchGeoCloneByCampaignName("GRN | Display");
+assert(grn?.location === "North America", "GRN koppelt aan GreenTech North America");
 
 // ── Onbekende campagne ──
 assert(matchGeoCloneByCampaignName("Generic Brand Campaign") === null, "een campagne zonder bekende afkorting geeft null");
@@ -51,7 +53,7 @@ assert(toewijzing[2].variant?.abbreviation === "ICC", "derde campagne toegewezen
 
 // ── Catalogus-compleetheid ──
 assert(RAI_GEO_CLONES.length >= 18, "de catalogus dekt alle bekende merken en geo-clones");
-assert(RAI_GEO_CLONES.filter((v) => v.confirmed).length === 2, "precies twee afkortingen zijn bevestigd (AQM, ICC), de rest is te verifieren");
+assert(RAI_GEO_CLONES.filter((v) => v.confirmed).length === 6, "zes afkortingen zijn bevestigd (AQM, ICC, ICA, GRT, GRA, GRN), de rest is te verifieren");
 assert(new Set(RAI_GEO_CLONES.map((v) => v.abbreviation)).size === RAI_GEO_CLONES.length, "alle afkortingen zijn uniek, geen dubbele");
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
