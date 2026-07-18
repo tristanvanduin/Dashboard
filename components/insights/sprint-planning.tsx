@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, Fragment } from "react";
 import { Download, ChevronDown, ChevronUp, Loader2, Calendar, Plus, X, Upload } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { channelOfSource, CHANNEL_LABEL, type InsightChannel } from "@/lib/insights/channel-of";
+import { ChannelFilter, ChannelBadge } from "./channel-filter";
 
 interface SprintItem {
   id: string;
@@ -23,6 +25,7 @@ interface HypothesisRef {
   hypothesis: string;
   status: string;
   ice_total: number;
+  source: string | null;
 }
 
 const STATUS_OPTIONS = [
@@ -47,6 +50,7 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
   const [hypotheses, setHypotheses] = useState<Map<string, HypothesisRef>>(new Map());
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"active" | "done" | "all">("all");
+  const [channelFilter, setChannelFilter] = useState<InsightChannel | null>(null);
   const [collapsedHypotheses, setCollapsedHypotheses] = useState<Set<string>>(new Set());
   const [showAddHypothesis, setShowAddHypothesis] = useState(false);
   const [newHypothesis, setNewHypothesis] = useState("");
@@ -64,7 +68,7 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
 
     const [{ data: itemsData }, { data: hypData }] = await Promise.all([
       supabase.from("sprint_items").select("*").eq("client_id", clientId).order("week_number", { ascending: true }),
-      supabase.from("sprint_hypotheses").select("id, hypothesis, status, ice_total").eq("client_id", clientId).in("status", ["accepted", "completed"]),
+      supabase.from("sprint_hypotheses").select("id, hypothesis, status, ice_total, source").eq("client_id", clientId).in("status", ["accepted", "completed"]),
     ]);
 
     const allItems = (itemsData ?? []) as SprintItem[];
@@ -259,13 +263,15 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
   }
 
   function exportCSV() {
-    const headers = ["Week", "Taak", "Status", "Verantwoordelijke", "Hypothese", "Looptijd tot Beoordeling", "Metrics"];
+    const headers = ["Week", "Taak", "Kanaal", "Status", "Verantwoordelijke", "Hypothese", "Looptijd tot Beoordeling", "Metrics"];
     const rows = filteredItems.map((item) => {
       const hyp = item.hypothesis_id ? hypotheses.get(item.hypothesis_id) : null;
       const statusLabel = STATUS_OPTIONS.find((s) => s.value === item.status)?.label || item.status;
+      const ch = channelOfItem(item);
       return [
         item.week_number || "",
         `"${(item.task || "").replace(/"/g, '""')}"`,
+        ch ? CHANNEL_LABEL[ch] : "",
         statusLabel,
         item.owner || "",
         `"${(hyp?.hypothesis || "").replace(/"/g, '""')}"`,
@@ -284,11 +290,28 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
     URL.revokeObjectURL(url);
   }
 
+  // Kanaal per taak: via de bron van zijn hypothese; losse taken hebben geen kanaal (—).
+  const channelOfItem = (item: SprintItem): InsightChannel | null => {
+    if (!item.hypothesis_id) return null;
+    const hyp = hypotheses.get(item.hypothesis_id);
+    return hyp ? channelOfSource(hyp.source) : null;
+  };
+
   const filteredItems = items.filter((item) => {
-    if (filter === "active") return !["done", "expired"].includes(item.status);
-    if (filter === "done") return item.status === "done";
+    if (filter === "active" && ["done", "expired"].includes(item.status)) return false;
+    if (filter === "done" && item.status !== "done") return false;
+    if (channelFilter && channelOfItem(item) !== channelFilter) return false;
     return true;
   });
+
+  // Aantallen per kanaal (binnen het status-filter), voor de chips.
+  const channelCounts: Partial<Record<InsightChannel, number>> = {};
+  for (const item of items) {
+    if (filter === "active" && ["done", "expired"].includes(item.status)) continue;
+    if (filter === "done" && item.status !== "done") continue;
+    const ch = channelOfItem(item);
+    if (ch) channelCounts[ch] = (channelCounts[ch] ?? 0) + 1;
+  }
 
   // Group by hypothesis
   const grouped = new Map<string, SprintItem[]>();
@@ -381,6 +404,11 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
         </div>
       </div>
 
+      {/* Kanaal-filter: snel zien wat er per kanaal op de lijst staat. */}
+      <div className="px-5 py-2.5 border-b border-border bg-gray-50/40">
+        <ChannelFilter value={channelFilter} onChange={setChannelFilter} counts={channelCounts} />
+      </div>
+
       {/* Add hypothesis form */}
       {showAddHypothesis && (
         <div className="px-5 py-4 border-b border-border bg-purple-50/30 space-y-3">
@@ -442,6 +470,7 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
             <tr>
               <th className="px-4 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider text-left w-16">Week</th>
               <th className="px-4 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider text-left">Taak</th>
+              <th className="px-4 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider text-left w-24">Kanaal</th>
               <th className="px-4 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider text-left w-28">Status</th>
               <th className="px-4 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider text-left w-36">Verantwoordelijke</th>
               <th className="px-4 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider text-left w-24">Looptijd</th>
@@ -462,7 +491,7 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
                     className="bg-purple-50/40 cursor-pointer hover:bg-purple-50/60"
                     onClick={() => toggleCollapse(hypId)}
                   >
-                    <td colSpan={6} className="px-4 py-2.5">
+                    <td colSpan={7} className="px-4 py-2.5">
                       <div className="flex items-center gap-2">
                         {isCollapsed
                           ? <ChevronDown className="w-3.5 h-3.5 text-purple-400" />
@@ -471,6 +500,7 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
                         <span className="text-[11px] font-medium text-purple-700 max-w-[50%]">
                           {hyp?.hypothesis || "Hypothese"}
                         </span>
+                        <ChannelBadge channel={hyp ? channelOfSource(hyp.source) : null} />
                         <span className="ml-auto flex items-center gap-2 text-[9px] text-purple-400">
                           {groupItems.length} taken · ICE {hyp?.ice_total?.toFixed(1) || "?"}
                           <button
@@ -487,12 +517,12 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
 
                   {/* Task rows */}
                   {!isCollapsed && groupItems.map((item) => (
-                    <SprintRow key={item.id} item={item} onUpdate={updateItem} currentWeek={currentWeek} />
+                    <SprintRow key={item.id} item={item} onUpdate={updateItem} currentWeek={currentWeek} channel={channelOfItem(item)} />
                   ))}
                   {!isCollapsed && showAddTask === hypId && (
                     <tr className="bg-purple-50/20">
                       <td className="px-4 py-2" />
-                      <td className="px-4 py-2" colSpan={3}>
+                      <td className="px-4 py-2" colSpan={4}>
                         <div className="flex items-center gap-2">
                           <input value={newTask} onChange={(e) => setNewTask(e.target.value)} placeholder="Nieuwe taak..." className="flex-1 text-xs border border-purple-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-purple-400" />
                           <select value={newOwner} onChange={(e) => setNewOwner(e.target.value)} className="text-xs border border-purple-200 rounded px-2 py-1 bg-white">
@@ -512,7 +542,7 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
 
             {/* Items without hypothesis */}
             {noHypothesis.map((item) => (
-              <SprintRow key={item.id} item={item} onUpdate={updateItem} currentWeek={currentWeek} />
+              <SprintRow key={item.id} item={item} onUpdate={updateItem} currentWeek={currentWeek} channel={channelOfItem(item)} />
             ))}
           </tbody>
         </table>
@@ -521,7 +551,7 @@ export function SprintPlanning({ clientId, refreshKey }: Props) {
   );
 }
 
-function SprintRow({ item, onUpdate, currentWeek }: { item: SprintItem; onUpdate: (id: string, field: string, value: string) => void; currentWeek: number }) {
+function SprintRow({ item, onUpdate, currentWeek, channel }: { item: SprintItem; onUpdate: (id: string, field: string, value: string) => void; currentWeek: number; channel: InsightChannel | null }) {
   const isOverdue = item.week_number != null && item.week_number < currentWeek && !["done", "expired"].includes(item.status);
   const isCurrent = item.week_number != null && item.week_number === currentWeek;
 
@@ -544,6 +574,7 @@ function SprintRow({ item, onUpdate, currentWeek }: { item: SprintItem; onUpdate
         </div>
       </td>
       <td className="px-4 py-2.5 text-sm text-rm-gray">{item.task}</td>
+      <td className="px-4 py-2.5"><ChannelBadge channel={channel} /></td>
       <td className="px-4 py-2.5">
         <select
           value={item.status}

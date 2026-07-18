@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Beaker, Check, ChevronDown, ChevronUp, Loader2, Link2, X } from "lucide-react";
+import type { InsightChannel } from "@/lib/insights/channel-of";
 
 interface LinkedFinding {
   id: string;
@@ -67,6 +68,8 @@ interface Props {
   clientId: string;
   refreshKey?: number;
   onWorkflowChange?: () => void;
+  /** Kanaal-filter. Dit block is de maand-workflow (Google-pijplijn); bij een ander kanaal toont het een eerlijke lege staat. */
+  channel?: InsightChannel | null;
 }
 
 function statusTone(status: HypothesisWorkflowItem["status"]) {
@@ -75,7 +78,7 @@ function statusTone(status: HypothesisWorkflowItem["status"]) {
   return "bg-amber-100 text-amber-700";
 }
 
-export function HypothesesBlock({ clientId, refreshKey, onWorkflowChange }: Props) {
+export function HypothesesBlock({ clientId, refreshKey, onWorkflowChange, channel }: Props) {
   const [payload, setPayload] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -146,6 +149,9 @@ export function HypothesesBlock({ clientId, refreshKey, onWorkflowChange }: Prop
       </div>
     );
   }
+
+  // De maand-workflow is de Google-pijplijn; onder een ander kanaal-filter is dit block leeg.
+  if (channel && channel !== "google") return null;
 
   if (hypotheses.length === 0) return null;
 
