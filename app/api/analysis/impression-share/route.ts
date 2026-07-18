@@ -17,6 +17,7 @@ import {
   type CountryImpressionShareRow,
 } from "@/lib/analysis/impression-share-facts";
 import { buildImpressionSharePrompt } from "@/lib/prompts/impression-share-prompt";
+import { saveImpressionShareHypotheses } from "@/lib/analysis/standalone-to-hypotheses";
 
 const SECTION = "impression_share_v1";
 const SOP_TYPE = "impression_share";
@@ -125,6 +126,9 @@ export async function POST(request: NextRequest) {
     },
   });
   if (saveError) return Response.json({ error: "Opslaan mislukt", detail: saveError }, { status: 500 });
+
+  // Voed de goedkeuringswachtrij: aggregeer het budget-/rang-verlies tot één voorstel.
+  await saveImpressionShareHypotheses(supabase, { summary, campaigns }, { clientId, analysisId: null });
 
   return Response.json({ analysis: response.output, summary, campaigns, geo });
 }

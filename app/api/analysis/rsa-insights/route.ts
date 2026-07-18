@@ -11,6 +11,7 @@ import { getSupabase, getOpenRouterKey, fetchClientContext, saveAnalysisOutputSe
 import { callRouted } from "@/lib/analysis/llm-router";
 import { recordUsage } from "@/lib/analysis/o2-targets-cost";
 import { analyzeRsaInsights, type RsaAssetRow } from "@/lib/analysis/rsa-insights-facts";
+import { saveRsaInsightsHypotheses } from "@/lib/analysis/standalone-to-hypotheses";
 import { buildRsaInsightsPrompt } from "@/lib/prompts/rsa-insights-prompt";
 
 const SECTION = "rsa_insights_v1";
@@ -110,6 +111,9 @@ export async function POST(request: NextRequest) {
     },
   });
   if (saveError) return Response.json({ error: "Opslaan mislukt", detail: saveError }, { status: 500 });
+
+  // Voed de goedkeuringswachtrij: aggregeer de geprioriteerde schrijfopdrachten tot één voorstel.
+  await saveRsaInsightsHypotheses(supabase, facts, { clientId, analysisId: null });
 
   return Response.json({ analysis: response.output, summary: facts.summary, actions: facts.actions });
 }

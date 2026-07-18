@@ -105,7 +105,18 @@ export function auditFindingsToHypotheses(
 // SI6: "analysis" is de maandpipeline zelf (extract-structured). Alle drie de bronnen
 // lopen nu via saveProposalsReplacingPending, zodat er EEN schrijfpad is met dezelfde
 // veilige semantiek (insert voor delete, geaccepteerde voorstellen blijven staan).
-export type ProposalSource = "second_opinion" | "search_terms" | "analysis";
+// SI7: de losse Google-analyses voeden nu ook de wachtrij, elk via een eigen bron zodat de
+// "vervang alleen mijn eigen pending"-semantiek per analyse geldt (een nieuwe budget-run
+// ververst alleen budget-voorstellen, niet die van de biedstrategie).
+export type ProposalSource =
+  | "second_opinion"
+  | "search_terms"
+  | "analysis"
+  | "budget_allocation"
+  | "bid_strategy"
+  | "impression_share"
+  | "rsa_insights"
+  | "landing_audit";
 
 /**
  * Schrijft nieuwe pending voorstellen weg en vervangt de oude van dezelfde bron,

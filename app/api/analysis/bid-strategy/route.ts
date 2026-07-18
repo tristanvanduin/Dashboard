@@ -12,6 +12,7 @@ import { callRouted } from "@/lib/analysis/llm-router";
 import { recordUsage } from "@/lib/analysis/o2-targets-cost";
 import { analyzeBidStrategy, type CampaignBidInput, type BidGoal } from "@/lib/analysis/bid-strategy-facts";
 import { buildBidStrategyPrompt } from "@/lib/prompts/bid-strategy-prompt";
+import { saveBidStrategyHypotheses } from "@/lib/analysis/standalone-to-hypotheses";
 
 const SECTION = "bid_strategy_v1";
 const SOP_TYPE = "bid_strategy";
@@ -138,6 +139,9 @@ export async function POST(request: NextRequest) {
     },
   });
   if (saveError) return Response.json({ error: "Opslaan mislukt", detail: saveError }, { status: 500 });
+
+  // Voed de goedkeuringswachtrij: aggregeer de biedstrategie-mismatches tot één voorstel.
+  await saveBidStrategyHypotheses(supabase, { summary, campaigns: facts }, { clientId, analysisId: null });
 
   return Response.json({ analysis: response.output, summary, campaigns: facts });
 }
