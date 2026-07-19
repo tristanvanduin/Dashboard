@@ -67,18 +67,23 @@ export async function POST(request: NextRequest) {
   monthsAgo.setMonth(monthsAgo.getMonth() - MONTHS_BACK);
   const sinceMonth = monthsAgo.toISOString().slice(0, 10);
   const sinceDemo = new Date(Date.now() - DEMO_DAYS * 86_400_000).toISOString().slice(0, 10);
+  // De lopende kalendermaand is per definitie onvolledig en vertekent elke
+  // maand-op-maand-detector; alleen volle maanden gaan de vergelijking in.
+  const currentMonthStart = new Date().toISOString().slice(0, 8) + "01";
 
   const [blendedRes, campaignRes, demoRes, labelRes, settingsRes] = await Promise.all([
     supabase
       .from("blended_account_monthly")
       .select("month, channel, impressions, clicks, spend, conversions, leads")
       .eq("client_id", clientId)
-      .gte("month", sinceMonth),
+      .gte("month", sinceMonth)
+      .lt("month", currentMonthStart),
     supabase
       .from("ads_campaign_monthly")
       .select("campaign_name, month, clicks")
       .eq("client_id", clientId)
-      .gte("month", sinceMonth),
+      .gte("month", sinceMonth)
+      .lt("month", currentMonthStart),
     supabase
       .from("linkedin_demographic_daily")
       .select("pivot_type, pivot_value_urn, leads, conversions")
