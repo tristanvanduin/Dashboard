@@ -73,6 +73,36 @@ export interface ForecastKPI {
   monthlyRatios: number[];
   /** The weighted performance factor used for projections */
   projectionFactor: number;
+  /** Ondergrens van de jaarprognose (adjustedAnnual − onzekerheid). */
+  forecastLow: number;
+  /** Bovengrens van de jaarprognose (adjustedAnnual + onzekerheid). */
+  forecastHigh: number;
+  /** Bandbreedte als fractie van de puntprognose; hoger = onzekerder. */
+  forecastSpreadPct: number;
+}
+
+/**
+ * Onzekerheidsband op de jaarprognose. De gerealiseerde maanden laten zien hoe volatiel de
+ * account presteert t.o.v. verwacht (de spreiding van realized/expected); die volatiliteit
+ * projecteren we op de nog te realiseren maanden. Zonder deze band suggereert één getal een
+ * valse precisie. Puur en los getest.
+ * @param realizedRatios de realized/expected-ratio per al gerealiseerde maand
+ * @param futureExpectedSum som van de verwachte waarde over de nog te projecteren maanden
+ * @param adjustedAnnual de puntprognose voor het jaar
+ */
+export function computeConfidenceBand(realizedRatios: number[], futureExpectedSum: number, adjustedAnnual: number): { low: number; high: number; spreadPct: number } {
+  if (realizedRatios.length < 2 || futureExpectedSum <= 0 || adjustedAnnual <= 0) {
+    // Te weinig historie voor een betekenisvolle spreiding: geen band (0-breedte).
+    return { low: adjustedAnnual, high: adjustedAnnual, spreadPct: 0 };
+  }
+  const mean = realizedRatios.reduce((s, r) => s + r, 0) / realizedRatios.length;
+  const variance = realizedRatios.reduce((s, r) => s + (r - mean) ** 2, 0) / realizedRatios.length;
+  const stdev = Math.sqrt(variance);
+  // De onzekerheid zit alleen op de toekomst; het gerealiseerde deel staat vast.
+  const halfBand = stdev * futureExpectedSum;
+  const low = Math.max(0, Math.round(adjustedAnnual - halfBand));
+  const high = Math.round(adjustedAnnual + halfBand);
+  return { low, high, spreadPct: Math.round((halfBand / adjustedAnnual) * 1000) / 10 };
 }
 
 export interface BudgetRecommendation {
@@ -751,6 +781,8 @@ function forecastCoreMetric(
 
   // Step 4: Build monthly points
   const monthlyRatios: number[] = [];
+  const realizedRatios: number[] = []; // alleen de gerealiseerde maanden, voor de onzekerheidsband
+  let futureExpectedSum = 0;           // verwachte waarde over de nog te projecteren maanden
   const points: ForecastPoint[] = [];
   let adjustedAnnual = 0;
 
@@ -766,6 +798,7 @@ function forecastCoreMetric(
     if (real !== null) {
       const ratio = exp > 0 ? real / exp : 1;
       monthlyRatios.push(ratio);
+      realizedRatios.push(ratio);
       adjustedAnnual += real;
       points.push({
         month: m + 1,
@@ -778,6 +811,7 @@ function forecastCoreMetric(
     } else {
       const proj = Math.round(exp * projectionFactor);
       monthlyRatios.push(projectionFactor);
+      futureExpectedSum += exp;
       adjustedAnnual += proj;
       points.push({
         month: m + 1,
@@ -826,6 +860,8 @@ function forecastCoreMetric(
     ? ((adjustedAnnual - annualTarget) / annualTarget) * 100
     : 0;
 
+  const band = computeConfidenceBand(realizedRatios, futureExpectedSum, adjustedAnnual);
+
   return {
     metric: metric === "adSpend" ? "cpa" : metric, // placeholder, overridden by caller
     points,
@@ -839,6 +875,9 @@ function forecastCoreMetric(
       performanceRatio: ytdExpected > 0 ? ytdRealized / ytdExpected : 1,
       monthlyRatios,
       projectionFactor,
+      forecastLow: band.low,
+      forecastHigh: band.high,
+      forecastSpreadPct: band.spreadPct,
     },
   };
 }
@@ -923,6 +962,11 @@ function deriveForecast(
       performanceRatio: numKpi.performanceRatio,
       monthlyRatios: points.map((p) => p.monthRatio),
       projectionFactor: numKpi.projectionFactor,
+      // Voor afgeleide ratio-metrics (ROAS/CPA) is een band op een deling misleidend; bewust
+      // geen bandbreedte claimen i.p.v. een verzonnen interval propageren.
+      forecastLow: adjusted,
+      forecastHigh: adjusted,
+      forecastSpreadPct: 0,
     },
   };
 }

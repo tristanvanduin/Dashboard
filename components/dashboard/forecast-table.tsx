@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useClientHistoricalData } from "@/lib/client-data-provider";
 import { computeForecast, MONTH_LABELS, type ForecastMetric } from "@/lib/forecast";
+import { supabase } from "@/lib/supabase";
 
 function formatNumber(v: number): string {
   return new Intl.NumberFormat("nl-NL").format(Math.round(v));
@@ -31,6 +32,22 @@ export function ForecastTable({ clientId }: { clientId: string }) {
   const data = useClientHistoricalData(clientId);
   const forecast = computeForecast(data);
 
+  // Event-besef: heeft deze klant beurzen geconfigureerd, dan is de kalender-YoY-prognose
+  // hieronder misleidend voor de maandvorm (een 2-jaarlijkse beurs vergelijkt met een
+  // beursloos jaar). We waarschuwen eerlijk en verwijzen naar de event-relatieve beursanalyse.
+  const [hasEvents, setHasEvents] = useState(false);
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    supabase.from("client_settings").select("rai_events").eq("client_id", clientId).maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const evs = (data?.rai_events as { events?: unknown[] } | null)?.events;
+        setHasEvents(Array.isArray(evs) && evs.length > 0);
+      });
+    return () => { cancelled = true; };
+  }, [clientId]);
+
   const metric = METRICS.find((m) => m.id === selectedMetric)!;
   const result = forecast[selectedMetric];
   const fmt = metric.format;
@@ -51,6 +68,16 @@ export function ForecastTable({ clientId }: { clientId: string }) {
   const totalDiffPct = result.kpi.diffPct;
 
   return (
+    <div className="space-y-4">
+      {hasEvents && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
+          <strong>Event-gedreven account.</strong> Deze kalender-jaarprognose vergelijkt elke maand met dezelfde
+          kalendermaand vorig jaar. Voor een beurs met een andere cadans (bijv. 2-jaarlijks) vertekent dat de
+          maandvorm — vorig jaar was er dan geen beurs. Gebruik de <strong>beursanalyse</strong> (kies een beurs
+          in het menu → Analyses) voor de event-relatieve prognose die de aanloop op gelijke afstand tot de
+          beursdag vergelijkt.
+        </div>
+      )}
     <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
       {/* Header with metric tabs */}
       <div className="px-5 pt-5 pb-4 flex items-center justify-between">
@@ -131,25 +158,39 @@ export function ForecastTable({ clientId }: { clientId: string }) {
                 {totalDiffPct > 0 ? "+" : ""}{totalDiffPct.toFixed(0)}%
               </td>
             </tr>
-            {/* Annual forecast summary row */}
+            {/* Annual forecast summary row + onzekerheidsband */}
             {!isRatio && (
-              <tr className="bg-rm-blue/5">
-                <td className="px-5 py-2.5 text-xs font-semibold text-rm-blue" colSpan={2}>
-                  Jaarprognose (gerealiseerd + prognose)
-                </td>
-                <td className="px-5 py-2.5 text-right text-xs font-bold text-rm-blue" colSpan={2}>
-                  {fmt(totalRealized + totalForecast)}
-                </td>
-                <td className={`px-5 py-2.5 text-right text-xs font-bold ${
-                  (isInverted ? totalDiffPct <= 0 : totalDiffPct >= 0) ? "text-green-600" : "text-red-500"
-                }`}>
-                  vs doel {fmt(totalExpected)}
-                </td>
-              </tr>
+              <>
+                <tr className="bg-rm-blue/5">
+                  <td className="px-5 py-2.5 text-xs font-semibold text-rm-blue" colSpan={2}>
+                    Jaarprognose (gerealiseerd + prognose)
+                  </td>
+                  <td className="px-5 py-2.5 text-right text-xs font-bold text-rm-blue" colSpan={2}>
+                    {fmt(kpiAdjusted)}
+                  </td>
+                  <td className={`px-5 py-2.5 text-right text-xs font-bold ${
+                    (isInverted ? totalDiffPct <= 0 : totalDiffPct >= 0) ? "text-green-600" : "text-red-500"
+                  }`}>
+                    vs doel {fmt(totalExpected)}
+                  </td>
+                </tr>
+                {result.kpi.forecastSpreadPct > 0 && (
+                  <tr className="bg-rm-blue/5">
+                    <td className="px-5 pb-2.5 text-[11px] text-muted-foreground" colSpan={2}>
+                      Bandbreedte (o.b.v. de spreiding in gerealiseerde maanden)
+                    </td>
+                    <td className="px-5 pb-2.5 text-right text-[11px] text-muted-foreground" colSpan={3}>
+                      {fmt(result.kpi.forecastLow)} – {fmt(result.kpi.forecastHigh)}
+                      <span className="ml-1 opacity-70">(±{result.kpi.forecastSpreadPct}%)</span>
+                    </td>
+                  </tr>
+                )}
+              </>
             )}
           </tfoot>
         </table>
       </div>
+    </div>
     </div>
   );
 }
