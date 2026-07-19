@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Loader2, Megaphone, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
 import { ChannelPerformance } from "./channel-performance";
+import { CreativePerformance } from "./creative-performance";
 
 // Meta Ads-tab: DATA-weergave (connectiestatus + wat het kanaal levert). De analyses
 // (maand-SOP, creative vision, briefing, signalen) draaien vanaf het Analyses-tabblad,
@@ -59,6 +60,8 @@ export function MetaView({ clientId, geoClone }: { clientId: string; geoClone?: 
 
       {/* Volwaardige prestatie-view: KPI's, pacing, grafiek, maand- en campagnetabel. */}
       <ChannelPerformance clientId={clientId} channel="meta" geoClone={geoClone} />
+      {/* Quick scan: creatives + prestaties + samenvatting. */}
+      <CreativePerformance clientId={clientId} channel="meta" />
     </div>
   );
 }

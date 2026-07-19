@@ -14,9 +14,9 @@ const DEMO_CLIENT = "demo-greentech";
 // Alle tabellen die de seed vult PLUS alles wat analyses op de demo-klant erbij schrijven.
 const TABLES = [
   "ads_campaign_monthly", "ads_account_monthly", "ads_account_weekly", "ads_campaign_impression_share",
-  "ads_search_terms_wasteful", "google_ads_ad_meta", "google_ads_rsa_assets",
-  "meta_connections", "meta_campaigns", "meta_ads", "meta_ad_daily", "meta_campaign_daily", "meta_account_daily",
-  "linkedin_connections", "linkedin_campaigns", "linkedin_campaign_daily", "linkedin_account_daily", "linkedin_demographic_daily",
+  "ads_search_terms_wasteful", "google_ads_ad_meta", "google_ads_rsa_assets", "ads_creative_performance",
+  "meta_connections", "meta_campaigns", "meta_ads", "meta_creatives", "meta_ad_daily", "meta_campaign_daily", "meta_account_daily",
+  "linkedin_connections", "linkedin_campaigns", "linkedin_creatives", "linkedin_campaign_daily", "linkedin_creative_daily", "linkedin_account_daily", "linkedin_demographic_daily",
   "client_settings", "geo_clone_settings", "client_sync_status",
   // Door analyses/wachtrij gegenereerd:
   "sop_analysis_output", "sop_insights", "sop_recommendations", "sop_tasks",

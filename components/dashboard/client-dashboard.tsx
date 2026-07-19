@@ -22,6 +22,7 @@ import { ProposalQueue } from "../insights/proposal-queue";
 import { ChannelFilter } from "../insights/channel-filter";
 import { MetaCreativeAnalyses } from "../insights/meta-creative-analyses";
 import { SignalAnalysisCard } from "./signal-analysis-card";
+import { CreativePerformance } from "./creative-performance";
 import type { InsightChannel } from "@/lib/insights/channel-of";
 import { SprintPlanning } from "../insights/sprint-planning";
 import { CampaignTable } from "./campaign-table";
@@ -259,6 +260,8 @@ export function ClientDashboard({ client }: { client: Client }) {
               <MetricCards clientId={client.id} countryFilter={countryFilter} />
 
               <PerformanceChart clientId={client.id} countryFilter={countryFilter} />
+              {/* Quick scan: hoe de advertenties eruitzien, hoe ze presteerden + korte samenvatting. */}
+              <CreativePerformance clientId={client.id} channel="google" />
               <ClientNotes clientId={client.id} />
               </>
               )}
