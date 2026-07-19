@@ -53,7 +53,7 @@ interface Client {
   source?: string;
 }
 
-type Tab = "dashboard" | "campaigns" | "forecast" | "insights" | "sprint" | "reporting" | "dgm" | "second-opinion" | "files" | "settings";
+type Tab = "dashboard" | "campaigns" | "forecast" | "insights" | "outcomes" | "sprint" | "reporting" | "dgm" | "second-opinion" | "files" | "settings";
 
 function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
   return (
@@ -144,6 +144,7 @@ export function ClientDashboard({ client }: { client: Client }) {
           { id: "campaigns", label: "Campagnes", icon: <LayoutGrid className="w-4 h-4" /> },
           { id: "forecast", label: "Prognose", icon: <TrendingUp className="w-4 h-4" /> },
           { id: "insights", label: "Analyses", icon: <Lightbulb className="w-4 h-4" /> },
+          { id: "outcomes", label: "Inzichten", icon: <Target className="w-4 h-4" /> },
           { id: "sprint", label: "Sprintplanning", icon: <Kanban className="w-4 h-4" /> },
           { id: "reporting", label: "Rapportage", icon: <FileText className="w-4 h-4" /> },
           { id: "dgm", label: "BMS", icon: <Users className="w-4 h-4" /> },
@@ -301,6 +302,8 @@ export function ClientDashboard({ client }: { client: Client }) {
             />
           )}
 
+          {activeTab === "outcomes" && <OutcomesTab clientId={client.id} />}
+
           {activeTab === "sprint" && (
             <SprintPlanning clientId={client.id} />
           )}
@@ -346,9 +349,25 @@ export function ClientDashboard({ client }: { client: Client }) {
                 </>
               ) : (
                 <>
-                  <ClientSettingsPanel clientId={client.id} clientName={client.name} />
+                  {/* Beurzen & edities bovenaan: de cadans (jaarlijks/2-jaarlijks) en de
+                      editie-datums voeden de dagen-tot-beurs-inzichten en de beursanalyse. */}
                   <EventSettings clientId={client.id} />
-                  <BrandingView clientId={client.id} clientName={client.name} />
+                  <details open className="rounded-xl border border-border bg-white shadow-sm">
+                    <summary className="cursor-pointer px-6 py-4 text-sm font-semibold text-rm-blue">
+                      Klantinstellingen (KPI-doelen, conversie-acties, landen, Merchant, logo)
+                    </summary>
+                    <div className="px-2 pb-2">
+                      <ClientSettingsPanel clientId={client.id} clientName={client.name} />
+                    </div>
+                  </details>
+                  <details className="rounded-xl border border-border bg-white shadow-sm">
+                    <summary className="cursor-pointer px-6 py-4 text-sm font-semibold text-rm-blue">
+                      Branding (merk-identiteit en live preview)
+                    </summary>
+                    <div className="px-2 pb-2">
+                      <BrandingView clientId={client.id} clientName={client.name} />
+                    </div>
+                  </details>
                 </>
               )}
             </div>
@@ -361,9 +380,7 @@ export function ClientDashboard({ client }: { client: Client }) {
 }
 
 function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: (error: SopError) => void }) {
-  const [selectedInsightId, setSelectedInsightId] = useState<string | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [channelFilter, setChannelFilter] = useState<InsightChannel | null>(null);
+  const [, setRefreshKey] = useState(0);
   const [analysisChannel, setAnalysisChannel] = useState<Channel>("google");
 
   // Het kanaal-subtabje kiest alleen WELKE analyses je draait; het uitkomsten-filter blijft
@@ -465,6 +482,23 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
         />
       )}
 
+      <p className="text-[11px] text-muted-foreground">
+        De uitkomsten (wachtrij, inzichten, aanbevelingen, hypotheses, taken) staan in het tabblad <strong>Inzichten</strong>.
+      </p>
+    </div>
+  );
+}
+
+// De uitkomsten-laag, losgetrokken van het draaien van analyses zodat beide pagina's
+// behapbaar blijven: wachtrij, inzichten, aanbevelingen, hypotheses-workflows en taken,
+// met het kanaal-filter (standaard Alle) over alles heen.
+function OutcomesTab({ clientId }: { clientId: string }) {
+  const [selectedInsightId, setSelectedInsightId] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [channelFilter, setChannelFilter] = useState<InsightChannel | null>(null);
+
+  return (
+    <div className="space-y-6">
       <TaskImpactReminder clientId={clientId} />
       {/* Kanaal-filter over inzichten, aanbevelingen, hypotheses, wachtrij en taken. */}
       <ChannelFilter value={channelFilter} onChange={setChannelFilter} />
