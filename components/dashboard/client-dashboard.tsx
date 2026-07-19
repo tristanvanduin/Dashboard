@@ -379,6 +379,13 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
         <>
           <SopTriggerButtons clientId={clientId} onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
           <StandaloneAnalyses clientId={clientId} />
+          <SignalAnalysisCard
+            clientId={clientId}
+            endpoint="/api/analysis/google-funnel"
+            title="Funnel-drop-off"
+            description="Vertoning → klik → conversie over de recente 4 weken vs de 4 weken ervoor; een verslechterde fase landt in de wachtrij."
+            runLabel="Draai funnel-analyse"
+          />
         </>
       )}
       {analysisChannel === "meta" && (
@@ -412,6 +419,13 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
           />
           <SignalAnalysisCard
             clientId={clientId}
+            endpoint="/api/analysis/linkedin-funnel"
+            title="Funnel-drop-off"
+            description="Vertoning → klik → landingspagina → form-open → lead over twee 28-dagen-vensters; een verslechterde fase landt in de wachtrij."
+            runLabel="Draai funnel-analyse"
+          />
+          <SignalAnalysisCard
+            clientId={clientId}
             endpoint="/api/analysis/linkedin-signals"
             title="LinkedIn-signalen"
             description="Deterministische detectie: lead-form drop-off, CPL-druk, engagement- en video-zwakte. Voedt de goedkeuringswachtrij."
@@ -423,7 +437,7 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
           clientId={clientId}
           endpoint="/api/analysis/cross-channel"
           title="Cross-channel-signalen"
-          description="Deterministische detectie tussen kanalen: zaai-oogst (social → brand-search), CPL-arbitrage, mix-shift (Simpson) en doelgroep-samenhang. Voedt de goedkeuringswachtrij."
+          description="Deterministische detectie tussen kanalen: zaai-oogst, CPL-arbitrage, mix-shift, doelgroep-samenhang én de cross-funnel (blended totaal, fase-achterblijver, divergentie). Voedt de goedkeuringswachtrij."
         />
       )}
 

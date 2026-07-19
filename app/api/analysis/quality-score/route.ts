@@ -10,6 +10,7 @@ import { NextRequest } from "next/server";
 import { getSupabase, getOpenRouterKey, fetchClientContext, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { callRouted } from "@/lib/analysis/llm-router";
 import { recordUsage } from "@/lib/analysis/o2-targets-cost";
+import { saveQualityScoreHypotheses } from "@/lib/analysis/standalone-to-hypotheses";
 import { analyzeQualityScore, type KeywordQsPerformanceRow } from "@/lib/analysis/quality-score-facts";
 import { buildQualityScorePrompt } from "@/lib/prompts/quality-score-prompt";
 
@@ -112,6 +113,9 @@ export async function POST(request: NextRequest) {
     },
   });
   if (saveError) return Response.json({ error: "Opslaan mislukt", detail: saveError }, { status: 500 });
+
+  // Voed de goedkeuringswachtrij: flags + prioriteits-keywords tot één voorstel.
+  await saveQualityScoreHypotheses(supabase, { flags: facts.flags, priorityKeywords: facts.priorityKeywords }, { clientId, analysisId: null });
 
   return Response.json({ analysis: response.output, summary: facts.summary, flags: facts.flags, priorityKeywords: facts.priorityKeywords });
 }

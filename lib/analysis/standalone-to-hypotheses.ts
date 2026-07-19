@@ -16,6 +16,7 @@ import type { BudgetAllocationSummary, BudgetFact } from "./budget-allocation-fa
 import type { BidStrategySummary, BidFact } from "./bid-strategy-facts";
 import type { CampaignISFact, ImpressionShareSummary } from "./impression-share-facts";
 import type { RsaInsightsFacts } from "./rsa-insights-facts";
+import type { QsFlag, QsPriorityKeyword } from "./quality-score-facts";
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
@@ -217,6 +218,34 @@ export function landingAuditToHypotheses(
   ];
 }
 
+// ── 6. Quality Score ────────────────────────────────────────
+// Actie zodra er flags zijn (dure lage-QS-woorden, QS-erosie, lage dekking). Impact schaalt
+// met de verspilde spend op niet-converterende prioriteits-keywords; converterende laag-QS-
+// woorden zijn duur maar werken en tellen niet als waste.
+export function qualityScoreToHypotheses(
+  input: { flags: QsFlag[]; priorityKeywords: QsPriorityKeyword[] },
+  opts: MapOpts
+): SprintHypothesisRow[] {
+  if (input.flags.length === 0) return [];
+
+  const wasteSpend = Math.round(input.priorityKeywords.filter((k) => !k.converting).reduce((s, k) => s + k.cost, 0));
+  const kinds = [...new Set(input.flags.map((f) => f.kind))].join(", ");
+  const examples = input.priorityKeywords.slice(0, 3).map((k) => `"${k.keywordText}" (QS ${k.qualityScore})`).join(", ");
+
+  return [
+    proposal({ ...opts, source: "quality_score" }, {
+      hypothesis: `Verbeter de kwaliteitsscore op ${input.priorityKeywords.length || input.flags.length} prioriteitspunt(en) (${kinds})`,
+      expected_result: "Hogere spend-gewogen QS en lagere CPC's op de geraakte keywords doordat advertentie-relevantie en landingservaring aansluiten op de zoekterm.",
+      measurement_metric: "Spend-gewogen QS en het lage-QS-spend-aandeel in de volgende quality-score-analyse.",
+      timeframe: "4 weken",
+      rationale: `${input.flags.map((f) => f.detail).slice(0, 3).join(" ")} ${examples ? `Prioriteit: ${examples}.` : ""} Niet-converterende lage-QS-spend: €${wasteSpend}.`,
+      ice_impact: wasteSpend >= 500 ? 7 : 4,
+      ice_confidence: 7,
+      ice_ease: 4, // QS verbeteren vraagt copy- en landingswerk, geen schakelaar
+    }),
+  ];
+}
+
 // ── Save-wrappers (elk vervangt alleen zijn eigen pending) ──
 
 export function saveBudgetAllocationHypotheses(supabase: SupabaseClient, input: { summary: BudgetAllocationSummary; scaleUp: BudgetFact[]; scaleDown: BudgetFact[] }, opts: MapOpts): Promise<number> {
@@ -233,4 +262,7 @@ export function saveRsaInsightsHypotheses(supabase: SupabaseClient, facts: RsaIn
 }
 export function saveLandingAuditHypotheses(supabase: SupabaseClient, items: LandingAuditItem[], opts: MapOpts): Promise<number> {
   return saveProposalsReplacingPending(supabase, opts.clientId, "landing_audit", landingAuditToHypotheses(items, opts));
+}
+export function saveQualityScoreHypotheses(supabase: SupabaseClient, input: { flags: QsFlag[]; priorityKeywords: QsPriorityKeyword[] }, opts: MapOpts): Promise<number> {
+  return saveProposalsReplacingPending(supabase, opts.clientId, "quality_score", qualityScoreToHypotheses(input, opts));
 }

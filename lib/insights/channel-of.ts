@@ -23,7 +23,7 @@ export const CHANNEL_BADGE_CLASS: Record<InsightChannel, string> = {
 };
 
 const META_KEYS = new Set(["meta_signals", "meta_briefing", "meta_creatives", "meta_monthly", "meta_funnel"]);
-const LINKEDIN_KEYS = new Set(["linkedin_signals", "linkedin_monthly", "linkedin_icp"]);
+const LINKEDIN_KEYS = new Set(["linkedin_signals", "linkedin_monthly", "linkedin_icp", "linkedin_funnel"]);
 const CROSS_KEYS = new Set(["cross_channel"]);
 
 /** Kanaal van een sprint_hypotheses.source (SI2/SI7/SI8-bronnen). */

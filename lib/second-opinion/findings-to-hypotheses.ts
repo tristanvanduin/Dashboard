@@ -122,7 +122,10 @@ export type ProposalSource =
   | "cross_channel"
   | "geo_clone"
   | "linkedin_icp"
-  | "meta_funnel";
+  | "meta_funnel"
+  | "linkedin_funnel"
+  | "google_funnel"
+  | "quality_score";
 
 /**
  * Schrijft nieuwe pending voorstellen weg en vervangt de oude van dezelfde bron,
