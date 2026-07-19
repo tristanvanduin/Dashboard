@@ -19,6 +19,7 @@ const ANALYSES: AnalysisConfig[] = [
   { key: "impression-share", label: "Impression Share", description: "Zichtbaarheid & verlies: budget versus rang", endpoint: "/api/analysis/impression-share" },
   { key: "budget-allocation", label: "Budgetallocatie", description: "Herverdeling naar bewezen-efficiënte campagnes", endpoint: "/api/analysis/budget-allocation" },
   { key: "bid-strategy", label: "Biedstrategie", description: "Fit van de biedstrategie per campagne", endpoint: "/api/analysis/bid-strategy" },
+  { key: "quality-score", label: "Quality Score", description: "Kwaliteitsscore-analyse per keyword/campagne", endpoint: "/api/analysis/quality-score" },
   { key: "rsa-insights", label: "RSA copy", description: "Advertentiekop- en beschrijving-analyse", endpoint: "/api/analysis/rsa-insights" },
   { key: "landing-audit", label: "Landing-audit", description: "Landingspagina-check per advertentie", endpoint: "/api/analysis/landing-audit" },
 ];

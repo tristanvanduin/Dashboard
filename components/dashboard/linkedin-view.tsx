@@ -1,7 +1,6 @@
 "use client";
 
-import { Briefcase, AlertCircle } from "lucide-react";
-import { SignalAnalysisCard } from "./signal-analysis-card";
+import { Briefcase, AlertCircle, ArrowRight } from "lucide-react";
 
 // LinkedIn Ads-tab. Het datamodel (linkedin_* tabellen) en de sync-laag staan klaar, maar er
 // is nog geen lees-API en nog geen gesyncte data. Dit tabblad toont de structuur en een
@@ -39,16 +38,12 @@ export function LinkedInView({ clientId }: { clientId: string }) {
               </li>
             ))}
           </ul>
+          <p className="text-[11px] text-muted-foreground mt-4 flex items-center gap-1.5">
+            <ArrowRight className="w-3.5 h-3.5" />
+            De LinkedIn-analyses (maand-SOP, signalen) draai je via het tabblad <strong>Analyses</strong> → LinkedIn.
+          </p>
         </div>
       </div>
-
-      {/* Deterministische signaal-detectie: form-drop-off, CPL-druk, engagement, video. */}
-      <SignalAnalysisCard
-        clientId={clientId}
-        endpoint="/api/analysis/linkedin-signals"
-        title="LinkedIn-signalen"
-        description="Deterministische detectie: lead-form drop-off, CPL-druk, engagement- en video-zwakte. Voedt de goedkeuringswachtrij."
-      />
     </div>
   );
 }

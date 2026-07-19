@@ -9,6 +9,16 @@ import { useGenerationProgress } from "@/lib/use-generation-progress";
 import { GenerationProgressCard } from "@/components/ui/generation-progress-card";
 
 type SopType = "weekly" | "biweekly" | "monthly";
+export type SopChannel = "google_ads" | "meta_ads" | "linkedin_ads";
+
+// Per kanaal: welke SOPs bestaan er, onder welke sop_type slaat de engine ze op, en hoe heet
+// het in de kop van het geexporteerde bestand. Meta en LinkedIn hebben (bewust) alleen de
+// maand-SOP; hun adapters (11 resp. 9 stappen) draaien via dezelfde /api/analysis/monthly.
+const CHANNEL_CONFIG: Record<SopChannel, { types: SopType[]; sopTypeKey: Record<SopType, string>; headerLabel: string }> = {
+  google_ads: { types: ["weekly", "biweekly", "monthly"], sopTypeKey: { weekly: "weekly", biweekly: "biweekly", monthly: "monthly" }, headerLabel: "SEA" },
+  meta_ads: { types: ["monthly"], sopTypeKey: { weekly: "weekly", biweekly: "biweekly", monthly: "meta_monthly" }, headerLabel: "Meta Ads" },
+  linkedin_ads: { types: ["monthly"], sopTypeKey: { weekly: "weekly", biweekly: "biweekly", monthly: "linkedin_monthly" }, headerLabel: "LinkedIn Ads" },
+};
 
 interface SopStatus {
   running: boolean;
@@ -47,9 +57,12 @@ interface Props {
   clientId: string;
   onAnalysisComplete: () => void;
   onAnalysisError?: (error: SopError) => void;
+  /** Kanaal waarvoor de SOPs draaien; bepaalt de zichtbare SOPs, de sop_type en de body-channel. */
+  channel?: SopChannel;
 }
 
-export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisError }: Props) {
+export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisError, channel = "google_ads" }: Props) {
+  const channelCfg = CHANNEL_CONFIG[channel];
   const { startJob, isRunning: isJobRunning } = useAnalysis();
   const [status, setStatus] = useState<Record<SopType, SopStatus>>({
     weekly: { running: false, lastDate: null, error: null, success: false },
@@ -90,7 +103,7 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
 
     async function loadLastDates() {
       if (!sb) return;
-      const types: SopType[] = ["weekly", "biweekly", "monthly"];
+      const types: SopType[] = channelCfg.types;
       const updates: Partial<Record<SopType, SopStatus>> = {};
 
       for (const type of types) {
@@ -98,7 +111,7 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
           .from("sop_analysis_output")
           .select("analysis_date")
           .eq("client_id", clientId)
-          .eq("sop_type", type)
+          .eq("sop_type", channelCfg.sopTypeKey[type])
           .order("analysis_date", { ascending: false })
           .limit(1);
 
@@ -120,13 +133,13 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
 
     loadLastDates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId]);
+  }, [clientId, channel]);
 
   async function uploadSopFile(sopType: SopType, analysisDate: string, markdownContent: string) {
     const sb = supabase;
     if (!sb) return;
 
-    const fileName = `${analysisDate}-${sopType}-analyse.md`;
+    const fileName = `${analysisDate}-${channelCfg.sopTypeKey[sopType]}-analyse.md`;
     const storagePath = `${clientId}/SOP's/${Date.now()}-${fileName}`;
     const blob = new Blob([markdownContent], { type: "text/markdown" });
 
@@ -151,7 +164,7 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
 
   function runSop(type: SopType) {
     const config = SOP_CONFIG[type];
-    const jobId = `sop-${type}-${clientId}`;
+    const jobId = `sop-${channelCfg.sopTypeKey[type]}-${clientId}`;
     const progressJobId = crypto.randomUUID();
     setActiveJobIds((prev) => ({ ...prev, [type]: progressJobId }));
 
@@ -165,7 +178,7 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
         const res = await fetch(config.endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id: clientId, job_id: progressJobId }),
+          body: JSON.stringify({ client_id: clientId, job_id: progressJobId, channel }),
         });
 
         const data = await res.json();
@@ -176,7 +189,7 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
         const analysisDate = data.analysisDate || new Date().toISOString().split("T")[0];
 
         if (type === "monthly" && data.steps) {
-          const header = `# Maandelijkse SEA Analyse\n**Client:** ${clientId}\n**Datum:** ${analysisDate}\n**Periode:** ${data.period?.start} t/m ${data.period?.end}\n**Model:** ${data.model}\n\n---\n\n`;
+          const header = `# Maandelijkse ${channelCfg.headerLabel} Analyse\n**Client:** ${clientId}\n**Datum:** ${analysisDate}\n**Periode:** ${data.period?.start} t/m ${data.period?.end}\n**Model:** ${data.model}\n\n---\n\n`;
           const stepsContent = data.steps
             .map((s: { step: number; name: string; output: string }) =>
               `## Stap ${s.step}: ${s.name}\n\n${s.output}`
@@ -238,7 +251,7 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
     try {
       const params = new URLSearchParams({
         client_id: clientId,
-        sop_type: type,
+        sop_type: channelCfg.sopTypeKey[type],
         client_name: clientName,
         job_id: progressJobId,
       });
@@ -268,18 +281,19 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
   }
 
   const anyRunning = Object.values(status).some((s) => s.running) ||
-    (["weekly", "biweekly", "monthly"] as SopType[]).some((t) => isJobRunning(`sop-${t}-${clientId}`));
+    channelCfg.types.some((t) => isJobRunning(`sop-${channelCfg.sopTypeKey[t]}-${clientId}`));
 
   return (
     <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
       <div className="px-5 py-3 border-b border-border">
-        <h3 className="text-sm font-semibold text-rm-gray">SOP Analyse</h3>
+        <h3 className="text-sm font-semibold text-rm-gray">SOP Analyse — {channelCfg.headerLabel}</h3>
         <p className="text-[10px] text-muted-foreground mt-0.5">
           Klik op een analyse om deze handmatig uit te voeren. Output wordt opgeslagen bij Bestanden &gt; SOP&apos;s.
         </p>
       </div>
       <div className="px-5 py-4 flex gap-3 flex-wrap">
-        {(Object.entries(SOP_CONFIG) as [SopType, typeof SOP_CONFIG.weekly][]).map(([type, config]) => {
+        {channelCfg.types.map((type) => {
+          const config = SOP_CONFIG[type];
           const s = status[type];
           const progressJob = progressByType[type];
           const pdfProgressJob = pdfProgressByType[type];

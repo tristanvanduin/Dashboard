@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { Loader2, Layers, Info } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { SignalAnalysisCard } from "./signal-analysis-card";
 
 // Cross-channel (blended) tab. Leest de blended_account_monthly-view over Google, Meta en
 // LinkedIn heen. De view levert de bouwstenen; de attributie-voetnoot is verplicht, want elk
@@ -57,14 +56,7 @@ export function CrossChannelView({ clientId }: { clientId: string }) {
 
   return (
     <div className="space-y-6">
-      {/* Het verhaal TUSSEN de kanalen: zaai-oogst, CPL-arbitrage, mix-shift, doelgroep-samenhang. */}
-      <SignalAnalysisCard
-        clientId={clientId}
-        endpoint="/api/analysis/cross-channel"
-        title="Cross-channel-signalen"
-        description="Deterministische detectie tussen kanalen: zaai-oogst (social → brand-search), CPL-arbitrage, mix-shift (Simpson) en doelgroep-samenhang. Voedt de goedkeuringswachtrij."
-      />
-
+      {/* Data-weergave; de cross-channel-signaalanalyse draait via Analyses → Cross-channel. */}
       <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center gap-2">
           <Layers className="w-5 h-5 text-rm-blue" />

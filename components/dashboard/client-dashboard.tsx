@@ -19,6 +19,8 @@ import { StandaloneAnalyses } from "../insights/standalone-analyses";
 import { HypothesesBlock } from "../insights/hypotheses-block";
 import { ProposalQueue } from "../insights/proposal-queue";
 import { ChannelFilter } from "../insights/channel-filter";
+import { MetaCreativeAnalyses } from "../insights/meta-creative-analyses";
+import { SignalAnalysisCard } from "./signal-analysis-card";
 import type { InsightChannel } from "@/lib/insights/channel-of";
 import { SprintPlanning } from "../insights/sprint-planning";
 import { CampaignTable } from "./campaign-table";
@@ -356,15 +358,61 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
   const [selectedInsightId, setSelectedInsightId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [channelFilter, setChannelFilter] = useState<InsightChannel | null>(null);
+  const [analysisChannel, setAnalysisChannel] = useState<Channel>("google");
+
+  // Het kanaal-subtabje stuurt ook het uitkomsten-filter mee, zodat "Meta" direct de
+  // Meta-wachtrij/inzichten toont; via de filterbalk kan de gebruiker daarna alsnog "Alle" kiezen.
+  const CHANNEL_TO_FILTER: Record<Channel, InsightChannel> = { google: "google", meta: "meta", linkedin: "linkedin", blended: "cross" };
+  function switchAnalysisChannel(c: Channel) {
+    setAnalysisChannel(c);
+    setChannelFilter(CHANNEL_TO_FILTER[c]);
+  }
+
+  const onComplete = () => setRefreshKey((k) => k + 1);
 
   return (
     <div className="space-y-6">
-      <SopTriggerButtons
-        clientId={clientId}
-        onAnalysisComplete={() => setRefreshKey((k) => k + 1)}
-        onAnalysisError={onSopError}
-      />
-      <StandaloneAnalyses clientId={clientId} />
+      {/* Alle analyses draaien hier, per kanaal; de kanaaltabs elders zijn data-weergaven. */}
+      <ChannelTabs channel={analysisChannel} onChange={switchAnalysisChannel} />
+
+      {analysisChannel === "google" && (
+        <>
+          <SopTriggerButtons clientId={clientId} onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
+          <StandaloneAnalyses clientId={clientId} />
+        </>
+      )}
+      {analysisChannel === "meta" && (
+        <>
+          <SopTriggerButtons clientId={clientId} channel="meta_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
+          <MetaCreativeAnalyses clientId={clientId} />
+          <SignalAnalysisCard
+            clientId={clientId}
+            endpoint="/api/analysis/meta-signals"
+            title="Meta-signalen"
+            description="Deterministische detectie: creative fatigue, frequency-saturatie, ranking-zwakte, hook/hold. Voedt de goedkeuringswachtrij."
+          />
+        </>
+      )}
+      {analysisChannel === "linkedin" && (
+        <>
+          <SopTriggerButtons clientId={clientId} channel="linkedin_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
+          <SignalAnalysisCard
+            clientId={clientId}
+            endpoint="/api/analysis/linkedin-signals"
+            title="LinkedIn-signalen"
+            description="Deterministische detectie: lead-form drop-off, CPL-druk, engagement- en video-zwakte. Voedt de goedkeuringswachtrij."
+          />
+        </>
+      )}
+      {analysisChannel === "blended" && (
+        <SignalAnalysisCard
+          clientId={clientId}
+          endpoint="/api/analysis/cross-channel"
+          title="Cross-channel-signalen"
+          description="Deterministische detectie tussen kanalen: zaai-oogst (social → brand-search), CPL-arbitrage, mix-shift (Simpson) en doelgroep-samenhang. Voedt de goedkeuringswachtrij."
+        />
+      )}
+
       <TaskImpactReminder clientId={clientId} />
       {/* Kanaal-filter over inzichten, aanbevelingen, hypotheses, wachtrij en taken. */}
       <ChannelFilter value={channelFilter} onChange={setChannelFilter} />
