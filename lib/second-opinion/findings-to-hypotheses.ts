@@ -120,7 +120,9 @@ export type ProposalSource =
   | "meta_signals"
   | "linkedin_signals"
   | "cross_channel"
-  | "geo_clone";
+  | "geo_clone"
+  | "linkedin_icp"
+  | "meta_funnel";
 
 /**
  * Schrijft nieuwe pending voorstellen weg en vervangt de oude van dezelfde bron,

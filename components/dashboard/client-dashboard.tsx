@@ -387,6 +387,13 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
           <MetaCreativeAnalyses clientId={clientId} />
           <SignalAnalysisCard
             clientId={clientId}
+            endpoint="/api/analysis/meta-funnel"
+            title="Funnel-drop-off"
+            description="Fase-overgangen (klik → landing → winkelwagen → checkout → conversie) recent vs prior venster; de verslechterde fase landt in de wachtrij."
+            runLabel="Draai funnel-analyse"
+          />
+          <SignalAnalysisCard
+            clientId={clientId}
             endpoint="/api/analysis/meta-signals"
             title="Meta-signalen"
             description="Deterministische detectie: creative fatigue, frequency-saturatie, ranking-zwakte, hook/hold. Voedt de goedkeuringswachtrij."
@@ -396,6 +403,13 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
       {analysisChannel === "linkedin" && (
         <>
           <SopTriggerButtons clientId={clientId} channel="linkedin_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
+          <SignalAnalysisCard
+            clientId={clientId}
+            endpoint="/api/analysis/linkedin-icp-fit"
+            title="ICP-fit"
+            description="Welk deel van de spend en leads valt binnen het ideale klantprofiel, wat is de waste en wat kost een ICP-lead vs een niet-ICP-lead."
+            runLabel="Draai ICP-fit"
+          />
           <SignalAnalysisCard
             clientId={clientId}
             endpoint="/api/analysis/linkedin-signals"

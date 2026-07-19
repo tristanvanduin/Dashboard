@@ -22,8 +22,8 @@ export const CHANNEL_BADGE_CLASS: Record<InsightChannel, string> = {
   cross: "bg-amber-50 text-amber-700 border-amber-200",
 };
 
-const META_KEYS = new Set(["meta_signals", "meta_briefing", "meta_creatives"]);
-const LINKEDIN_KEYS = new Set(["linkedin_signals"]);
+const META_KEYS = new Set(["meta_signals", "meta_briefing", "meta_creatives", "meta_monthly", "meta_funnel"]);
+const LINKEDIN_KEYS = new Set(["linkedin_signals", "linkedin_monthly", "linkedin_icp"]);
 const CROSS_KEYS = new Set(["cross_channel"]);
 
 /** Kanaal van een sprint_hypotheses.source (SI2/SI7/SI8-bronnen). */

@@ -21,6 +21,10 @@ assert(channelOfSource(" Meta_Signals ") === "meta", "trim + case-ongevoelig");
 
 console.log("sop_type -> kanaal:");
 assert(channelOfSopType("monthly") === "google", "monthly => google");
+assert(channelOfSopType("meta_monthly") === "meta", "meta_monthly (Meta-SOP) => meta");
+assert(channelOfSopType("linkedin_monthly") === "linkedin", "linkedin_monthly (LinkedIn-SOP) => linkedin");
+assert(channelOfSopType("meta_funnel") === "meta", "meta_funnel => meta");
+assert(channelOfSopType("linkedin_icp") === "linkedin", "linkedin_icp => linkedin");
 assert(channelOfSopType("meta_briefing") === "meta", "meta_briefing => meta");
 assert(channelOfSopType("meta_creatives") === "meta", "meta_creatives => meta");
 assert(channelOfSopType("linkedin_signals") === "linkedin", "linkedin_signals => linkedin");

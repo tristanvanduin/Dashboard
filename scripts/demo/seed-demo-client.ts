@@ -77,7 +77,7 @@ function googleMonthly(): GMonth[] {
 }
 
 // ── Meta: dag-data met de creative-scenario's [S1-S4, S7, S8] ─────────────
-interface MetaDaily { entity: string; date: string; imp: number; linkClicks: number; spend: number; conv: number; freq: number | null; hook: number | null; hold: number | null; qr?: string | null; er?: string | null; cr?: string | null }
+interface MetaDaily { entity: string; date: string; imp: number; linkClicks: number; spend: number; conv: number; freq: number | null; hook: number | null; hold: number | null; qr?: string | null; er?: string | null; cr?: string | null; lpv?: number; atc?: number; ic?: number }
 
 const META_ADS = [
   { id: "demo-ad-hero-a", name: "Hero Video A", campaign: "demo-mc-awareness" },
@@ -131,7 +131,10 @@ function metaAccountDaily(): MetaDaily[] {
   for (let d = 159; d >= 0; d--) {
     const date = addDays(TODAY, -d);
     const surge = isSurgeMonth(date);
-    rows.push({ entity: "demo-meta-account", date, imp: surge ? 7000 : 5000, linkClicks: surge ? 63 : 45, spend: 150, conv: 6, freq: null, hook: null, hold: null });
+    // Funnel-fasen: landing->winkelwagen zakt in de laatste 28 dagen van 20% naar 12%
+    // (materiele drop-off voor de losse funnel-analyse), de rest blijft stabiel.
+    const recent28 = d < 28;
+    rows.push({ entity: "demo-meta-account", date, imp: surge ? 7000 : 5000, linkClicks: surge ? 63 : 45, spend: 150, conv: 6, freq: null, hook: null, hold: null, lpv: 30, atc: recent28 ? 3.6 : 6, ic: recent28 ? 2.4 : 4 });
   }
   return rows;
 }
@@ -286,6 +289,7 @@ export function buildAllRows(): Record<string, Row[]> {
   const metaBase = (r: MetaDaily): Row => ({
     client_id: DEMO_CLIENT, date: r.date, entity_id: r.entity, impressions: r.imp, link_clicks: r.linkClicks,
     spend: r.spend, conversions: r.conv, conversion_value: 0, frequency: r.freq, hook_rate: r.hook, hold_rate: r.hold,
+    landing_page_views: r.lpv ?? null, add_to_cart: r.atc ?? null, initiate_checkout: r.ic ?? null,
   });
   tables["meta_ad_daily"] = metaAdDaily().map((r) => ({
     ...metaBase(r), quality_ranking: r.qr ?? null, engagement_rate_ranking: r.er ?? null, conversion_rate_ranking: r.cr ?? null,
@@ -314,7 +318,12 @@ export function buildAllRows(): Record<string, Row[]> {
   tables["linkedin_demographic_daily"] = demoRows;
 
   // Instellingen + sync-status.
-  tables["client_settings"] = [{ client_id: DEMO_CLIENT, kpi_targets: KPI_TARGETS, rai_events: RAI_EVENTS, audience_profile: AUDIENCE_PROFILE }];
+  // linkedin_icp: het ICP matcht op URN; alleen Operations is ICP, dus de Education-leads
+  // (75%) zijn waste — voedt de losse ICP-fit-analyse met een materiele bevinding.
+  tables["client_settings"] = [{
+    client_id: DEMO_CLIENT, kpi_targets: KPI_TARGETS, rai_events: RAI_EVENTS, audience_profile: AUDIENCE_PROFILE,
+    linkedin_icp: { job_functions: ["urn:li:function:demo-ops"], seniorities: [], industries: [], company_sizes: [] },
+  }];
   tables["geo_clone_settings"] = GEO_CLONE_SETTINGS.map((s) => ({ client_id: DEMO_CLIENT, ...s }));
   tables["client_sync_status"] = [{ client_id: DEMO_CLIENT, last_sync_at: new Date().toISOString(), last_sync_status: "demo", last_successful_sync_at: new Date().toISOString(), datasets_available: 10, datasets_total: 10, freshness_status: "fresh" }];
 
