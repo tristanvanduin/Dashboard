@@ -8,11 +8,14 @@ import { Loader2, Radar, Calendar, AlertCircle, CheckCircle2, ChevronDown, Chevr
 // POST { client_id } om te draaien. Geen LLM in de route, dus draaien is goedkoop; de kaart
 // toont de laatste output uitklapbaar zodat de bevindingen zichtbaar blijven zonder klik.
 
-export function SignalAnalysisCard({ clientId, endpoint, title, description }: {
+export function SignalAnalysisCard({ clientId, endpoint, title, description, extra, runLabel }: {
   clientId: string;
   endpoint: string;
   title: string;
   description: string;
+  /** Extra parameters die mee moeten in de GET-query en de POST-body (bijv. geo_clone). */
+  extra?: Record<string, string>;
+  runLabel?: string;
 }) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,9 +24,12 @@ export function SignalAnalysisCard({ clientId, endpoint, title, description }: {
   const [output, setOutput] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
+  const extraKey = JSON.stringify(extra ?? {});
+
   const fetchLatest = useCallback(async () => {
     try {
-      const res = await fetch(`${endpoint}?client_id=${encodeURIComponent(clientId)}`);
+      const qs = new URLSearchParams({ client_id: clientId, ...(JSON.parse(extraKey) as Record<string, string>) });
+      const res = await fetch(`${endpoint}?${qs.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data?.analysis) {
@@ -31,7 +37,7 @@ export function SignalAnalysisCard({ clientId, endpoint, title, description }: {
         setOutput(data.analysis.output ?? null);
       }
     } catch { /* geen laatste run is geen fout */ }
-  }, [clientId, endpoint]);
+  }, [clientId, endpoint, extraKey]);
 
   useEffect(() => {
     setLastDate(null); setOutput(null); setError(null); setSuccess(null); setExpanded(false);
@@ -44,11 +50,17 @@ export function SignalAnalysisCard({ clientId, endpoint, title, description }: {
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: clientId }),
+        body: JSON.stringify({ client_id: clientId, ...(extra ?? {}) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Analyse mislukt");
-      setSuccess(`${data.signals ?? 0} signa${(data.signals ?? 0) === 1 ? "al" : "len"} getriggerd (${data.checked ?? 0} gecontroleerd)`);
+      setSuccess(
+        data.signals != null
+          ? `${data.signals} signa${data.signals === 1 ? "al" : "len"} getriggerd (${data.checked ?? 0} gecontroleerd)`
+          : data.actionNeeded != null
+          ? data.actionNeeded ? "Analyse klaar: bijsturing nodig (voorstel in de wachtrij)" : "Analyse klaar: op koers"
+          : "Analyse uitgevoerd en opgeslagen"
+      );
       await fetchLatest();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Onbekende fout");
@@ -71,7 +83,7 @@ export function SignalAnalysisCard({ clientId, endpoint, title, description }: {
           className="px-3 py-1.5 rounded-md bg-rm-blue text-white text-[11px] font-medium hover:bg-rm-blue/90 disabled:opacity-50 flex items-center gap-1.5 transition-all"
         >
           {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-          {running ? "Detecteren..." : "Detecteer signalen"}
+          {running ? "Bezig..." : runLabel ?? "Detecteer signalen"}
         </button>
       </div>
       <div className="px-5 py-3 space-y-2">
