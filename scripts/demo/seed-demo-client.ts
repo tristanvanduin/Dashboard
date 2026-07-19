@@ -319,6 +319,52 @@ export function buildAllRows(): Record<string, Row[]> {
   }
   tables["linkedin_demographic_daily"] = demoRows;
 
+  // Google creative-performance: RSA's met echte tekst + metrics, zodat de Creative
+  // Performance-view de tekstpreview kan tonen (de sync vult deze arrays voor echte klanten).
+  const rsaCreatives = [
+    { ad: "demo-gcr-1", grp: "GRT Generiek", type: "RESPONSIVE_SEARCH_AD", h: "GreenTech Amsterdam 2026 — Boek uw stand", d: "Ontmoet 12.000 tuinbouwprofessionals. Vroegboekkorting tot 1 maart.", url: "https://demo.greentech-fictief.example/beurs", imp: 42000, clk: 2100, cost: 4150, conv: 78 },
+    { ad: "demo-gcr-2", grp: "GRT Generiek", type: "RESPONSIVE_SEARCH_AD", h: "Tuinbouwtechniek van morgen", d: "Ontdek de innovaties op GreenTech. Registreer gratis als bezoeker.", url: "https://demo.greentech-fictief.example/bezoek", imp: 61000, clk: 1500, cost: 2600, conv: 30 },
+    { ad: "demo-gcr-3", grp: "GRA Search", type: "RESPONSIVE_SEARCH_AD", h: "GreenTech Americas — Mexico City", d: "The horticulture event for the Americas. Book your booth now.", url: "https://demo.greentech-fictief.example/americas", imp: 30000, clk: 1400, cost: 3000, conv: 33 },
+    { ad: "demo-gcr-4", grp: "Brand", type: "RESPONSIVE_SEARCH_AD", h: "GreenTech — Officiële website", d: "Alles over de beurs, tickets en exposanten op één plek.", url: "https://demo.greentech-fictief.example", imp: 15000, clk: 1000, cost: 500, conv: 45 },
+    { ad: "demo-gcr-5", grp: "GRT Generiek", type: "RESPONSIVE_SEARCH_AD", h: "Gratis kas-inspiratie downloaden", d: "Download de trendgids 2026. (Test: nul conversies.)", url: "https://demo.greentech-fictief.example/gids", imp: 22000, clk: 900, cost: 700, conv: 0 },
+  ];
+  tables["ads_creative_performance"] = rsaCreatives.map((r) => ({
+    client_id: DEMO_CLIENT, month: monthsBack(0), campaign_id: campaignIdOf(r.grp), campaign_name: r.grp,
+    ad_group_id: `${r.ad}-grp`, ad_group_name: r.grp, ad_id: r.ad, ad_type: r.type,
+    headlines: [r.h], descriptions: [r.d], final_urls: [r.url],
+    impressions: r.imp, clicks: r.clk, cost: r.cost, conversions: r.conv,
+    ctr: r2(r.clk / r.imp), conversion_rate: r2(r.conv / r.clk),
+  }));
+
+  // Meta-creatives: koppel aan de bestaande demo-ads via creative_id, met titel/body/thumbnail.
+  const metaCreativeOf: Record<string, { fmt: string; title: string; body: string; cta: string; thumb: string }> = {
+    "demo-ad-hero-a": { fmt: "video", title: "GreenTech in 30 seconden", body: "Beleef de sfeer van de beurs — hero-video.", cta: "LEARN_MORE", thumb: "https://picsum.photos/seed/greentech-hero/320/200" },
+    "demo-ad-lifestyle-b": { fmt: "single_image", title: "Innovatie in de kas", body: "Lifestyle-beeld met een teler in beeld.", cta: "SIGN_UP", thumb: "https://picsum.photos/seed/greentech-life/320/200" },
+    "demo-ad-banner-c": { fmt: "single_image", title: "Boek uw stand", body: "Statische banner met call-to-action.", cta: "BOOK_TRAVEL", thumb: "https://picsum.photos/seed/greentech-banner/320/200" },
+    "demo-ad-carousel-d": { fmt: "carousel", title: "Producten op de beurs", body: "Carousel met exposanten.", cta: "SHOP_NOW", thumb: "https://picsum.photos/seed/greentech-carousel/320/200" },
+  };
+  tables["meta_ads"] = META_ADS.map((a) => ({ ad_id: a.id, adset_id: `${a.campaign}-as1`, campaign_id: a.campaign, client_id: DEMO_CLIENT, name: a.name, status: "ACTIVE", effective_status: "ACTIVE", creative_id: `${a.id}-cr` }));
+  tables["meta_creatives"] = META_ADS.map((a) => {
+    const c = metaCreativeOf[a.id];
+    return { creative_id: `${a.id}-cr`, client_id: DEMO_CLIENT, format: c.fmt, title: c.title, body: c.body, call_to_action_type: c.cta, link_url: "https://demo.greentech-fictief.example", thumbnail_url: c.thumb };
+  });
+
+  // LinkedIn-creatives + hun dagmetrics (per creative), zodat de LinkedIn-view rendert.
+  const liCreatives = [
+    { urn: "urn:li:sponsoredCreative:demo1", camp: LI_CAMPAIGNS[0].urn, fmt: "single_image", headline: "Ontmoet uw ICP op GreenTech", post: "Voor tuinbouw-beslissers: plan een meeting op de beurs.", cta: "Register", img: "https://picsum.photos/seed/li-abm/320/200" },
+    { urn: "urn:li:sponsoredCreative:demo2", camp: LI_CAMPAIGNS[1].urn, fmt: "single_image", headline: "Download het beursprogramma", post: "Lead-gen creative met programmagids.", cta: "Download", img: "https://picsum.photos/seed/li-leadgen/320/200" },
+  ];
+  tables["linkedin_creatives"] = liCreatives.map((c) => ({ creative_urn: c.urn, campaign_urn: c.camp, client_id: DEMO_CLIENT, status: "ACTIVE", format: c.fmt, headline: c.headline, post_text: c.post, cta_label: c.cta, landing_url: "https://demo.greentech-fictief.example", image_storage_path: c.img }));
+  const liCreativeDaily: Row[] = [];
+  for (let d = 45; d >= 0; d--) {
+    const date = addDays(TODAY, -d);
+    liCreativeDaily.push(
+      { client_id: DEMO_CLIENT, date, entity_urn: liCreatives[0].urn, impressions: 800, clicks: 12, spend: 60, external_website_conversions: 0.3, one_click_leads: 0.2, ctr: 0.015 },
+      { client_id: DEMO_CLIENT, date, entity_urn: liCreatives[1].urn, impressions: 700, clicks: 16, spend: 50, external_website_conversions: 0.5, one_click_leads: 0.9, ctr: 0.023 },
+    );
+  }
+  tables["linkedin_creative_daily"] = liCreativeDaily;
+
   // Instellingen + sync-status.
   // linkedin_icp: het ICP matcht op URN; alleen Operations is ICP, dus de Education-leads
   // (75%) zijn waste — voedt de losse ICP-fit-analyse met een materiele bevinding.
