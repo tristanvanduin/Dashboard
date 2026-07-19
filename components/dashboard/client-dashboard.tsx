@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { BarChart3, Settings, Calendar, Target, Loader2, AlertTriangle, Wifi, Clock, LayoutGrid, Lightbulb, TrendingUp, FolderOpen, Users, Kanban, ClipboardCheck, FileText, Globe, Megaphone, Briefcase, Layers } from "lucide-react";
 import { countryLabel } from "@/lib/countries";
 import { SyncStatusBadge } from "./sync-status-badge";
@@ -99,7 +100,12 @@ function ChannelTabs({ channel, onChange }: { channel: Channel; onChange: (c: Ch
 export function ClientDashboard({ client }: { client: Client }) {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [channel, setChannel] = useState<Channel>("google");
-  const [geoClone, setGeoClone] = useState<string | null>(null);
+  // Beurs-scope; initieel en live gestuurd door ?geo= uit het menu (Fase 3), daarna ook
+  // via de kiezer in de view aanpasbaar.
+  const searchParams = useSearchParams();
+  const geoParam = searchParams.get("geo");
+  const [geoClone, setGeoClone] = useState<string | null>(geoParam);
+  useEffect(() => { setGeoClone(geoParam); }, [geoParam]);
   const [sopErrors, setSopErrors] = useState<SopError[]>([]);
   const clientData = useClientData(client.id);
   const [lagDays, setLagDays] = useState<number>(3);
@@ -360,20 +366,14 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
   const [channelFilter, setChannelFilter] = useState<InsightChannel | null>(null);
   const [analysisChannel, setAnalysisChannel] = useState<Channel>("google");
 
-  // Het kanaal-subtabje stuurt ook het uitkomsten-filter mee, zodat "Meta" direct de
-  // Meta-wachtrij/inzichten toont; via de filterbalk kan de gebruiker daarna alsnog "Alle" kiezen.
-  const CHANNEL_TO_FILTER: Record<Channel, InsightChannel> = { google: "google", meta: "meta", linkedin: "linkedin", blended: "cross" };
-  function switchAnalysisChannel(c: Channel) {
-    setAnalysisChannel(c);
-    setChannelFilter(CHANNEL_TO_FILTER[c]);
-  }
-
+  // Het kanaal-subtabje kiest alleen WELKE analyses je draait; het uitkomsten-filter blijft
+  // standaard op "Alle kanalen" (geen kanaal is belangrijker) en wisselt alleen op eigen klik.
   const onComplete = () => setRefreshKey((k) => k + 1);
 
   return (
     <div className="space-y-6">
       {/* Alle analyses draaien hier, per kanaal; de kanaaltabs elders zijn data-weergaven. */}
-      <ChannelTabs channel={analysisChannel} onChange={switchAnalysisChannel} />
+      <ChannelTabs channel={analysisChannel} onChange={setAnalysisChannel} />
 
       {analysisChannel === "google" && (
         <>
