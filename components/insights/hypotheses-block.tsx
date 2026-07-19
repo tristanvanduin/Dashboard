@@ -78,7 +78,28 @@ function statusTone(status: HypothesisWorkflowItem["status"]) {
   return "bg-amber-100 text-amber-700";
 }
 
+type WorkflowChannel = "google" | "meta" | "linkedin";
+const WF_LABEL: Record<WorkflowChannel, string> = { google: "Google", meta: "Meta", linkedin: "LinkedIn" };
+
 export function HypothesesBlock({ clientId, refreshKey, onWorkflowChange, channel }: Props) {
+  // Cross-channel heeft geen maand-SOP-workflow; onder "Alle" stapelen de drie kanalen.
+  if (channel === "cross") return null;
+  const wfChannels: WorkflowChannel[] = channel ? [channel as WorkflowChannel] : ["google", "meta", "linkedin"];
+  return (
+    <>
+      {wfChannels.map((wf) => (
+        <HypothesesWorkflow key={wf} clientId={clientId} refreshKey={refreshKey} onWorkflowChange={onWorkflowChange} workflowChannel={wf} />
+      ))}
+    </>
+  );
+}
+
+function HypothesesWorkflow({ clientId, refreshKey, onWorkflowChange, workflowChannel }: {
+  clientId: string;
+  refreshKey?: number;
+  onWorkflowChange?: () => void;
+  workflowChannel: WorkflowChannel;
+}) {
   const [payload, setPayload] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -87,7 +108,7 @@ export function HypothesesBlock({ clientId, refreshKey, onWorkflowChange, channe
   async function refresh() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/insights/monthly-hypotheses?client_id=${encodeURIComponent(clientId)}`, { cache: "no-store" });
+      const res = await fetch(`/api/insights/monthly-hypotheses?client_id=${encodeURIComponent(clientId)}&channel=${workflowChannel}`, { cache: "no-store" });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json() as Payload;
       setPayload(data);
@@ -101,7 +122,8 @@ export function HypothesesBlock({ clientId, refreshKey, onWorkflowChange, channe
 
   useEffect(() => {
     void refresh();
-  }, [clientId, refreshKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId, refreshKey, workflowChannel]);
 
   const hypotheses = useMemo(() => {
     const list = payload?.hypotheses ?? [];
@@ -123,6 +145,7 @@ export function HypothesesBlock({ clientId, refreshKey, onWorkflowChange, channe
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           client_id: clientId,
+          channel: workflowChannel,
           hypothesis_id: hypothesisId,
           action,
           rejected_reason: rejectedReason,
@@ -150,9 +173,6 @@ export function HypothesesBlock({ clientId, refreshKey, onWorkflowChange, channe
     );
   }
 
-  // De maand-workflow is de Google-pijplijn; onder een ander kanaal-filter is dit block leeg.
-  if (channel && channel !== "google") return null;
-
   if (hypotheses.length === 0) return null;
 
   const pendingCount = hypotheses.filter((item) => item.status === "pending").length;
@@ -162,7 +182,7 @@ export function HypothesesBlock({ clientId, refreshKey, onWorkflowChange, channe
       <div className="flex items-center gap-2 mb-4">
         <Beaker className="w-4 h-4 text-purple-500" />
         <h3 className="text-sm font-semibold text-purple-700 uppercase tracking-wide">
-          Hypotheses workflow
+          Hypotheses workflow — {WF_LABEL[workflowChannel]}
         </h3>
         <span className="ml-auto px-2 py-0.5 text-[9px] font-bold rounded-full bg-purple-100 text-purple-600">
           {pendingCount} pending / {hypotheses.length} totaal

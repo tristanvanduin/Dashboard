@@ -1,21 +1,56 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Settings, Building2, Search, FileCode2, FolderOpen, FolderClosed, ChevronDown, ChevronRight } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Settings, Building2, Search, FileCode2, FolderOpen, FolderClosed, ChevronDown, ChevronRight, MapPin } from "lucide-react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { getVisibleClients, loadVisibleClientIds } from "@/lib/visible-clients";
 import { loadApiClients } from "@/lib/clients";
 import { migrateLocalStorageToSupabase } from "@/lib/migrate-to-supabase";
 import { loadClientGroups, type GroupWithMembers } from "@/lib/client-groups";
+import { supabase } from "@/lib/supabase";
+import { visibleGeoClones, type GeoCloneVariant } from "@/lib/rai/geo-clone-catalog";
 
 interface VisibleClient {
   id: string;
   name: string;
 }
 
+// Fase 3 geo-clone-projecten: de beurzen/geo-clones van de ACTIEVE klant hangen als
+// sub-items onder die klant in het menu (event -> geo-clones), gedetecteerd uit de
+// campagnenamen. Een sub-item opent de klant met de beurs-scope voorgeselecteerd (?geo=).
+
 export function Sidebar() {
+  return (
+    <Suspense fallback={<aside className="fixed left-0 top-0 bottom-0 w-72 bg-rm-blue z-50" />}>
+      <SidebarInner />
+    </Suspense>
+  );
+}
+
+function SidebarInner() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const activeGeo = searchParams.get("geo");
+  const activeClientId = pathname.startsWith("/client/") ? pathname.replace("/client/", "") : null;
+  const [geoClones, setGeoClones] = useState<GeoCloneVariant[]>([]);
+
+  // Geo-clones van de actieve klant detecteren uit de campagnenamen (lichte query).
+  useEffect(() => {
+    if (!activeClientId || !supabase) { setGeoClones([]); return; }
+    let cancelled = false;
+    supabase
+      .from("ads_campaign_monthly")
+      .select("campaign_name")
+      .eq("client_id", activeClientId)
+      .limit(2000)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const names = [...new Set((data ?? []).map((r) => String(r.campaign_name)))];
+        setGeoClones(visibleGeoClones(names));
+      });
+    return () => { cancelled = true; };
+  }, [activeClientId]);
   const [search, setSearch] = useState("");
   const [visibleClients, setVisibleClients] = useState<VisibleClient[]>([]);
   const [groups, setGroups] = useState<GroupWithMembers[]>([]);
@@ -98,18 +133,43 @@ export function Sidebar() {
 
   function ClientLink({ client }: { client: VisibleClient }) {
     const isActive = pathname === `/client/${client.id}`;
+    const showGeoClones = isActive && geoClones.length > 0;
     return (
-      <Link
-        href={`/client/${client.id}`}
-        className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-          isActive
-            ? "bg-rm-orange text-white font-medium"
-            : "text-white/70 hover:bg-white/10 hover:text-white"
-        }`}
-      >
-        <Building2 className="w-3.5 h-3.5 shrink-0" />
-        <span className="truncate">{client.name}</span>
-      </Link>
+      <div>
+        <Link
+          href={`/client/${client.id}`}
+          className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+            isActive && !activeGeo
+              ? "bg-rm-orange text-white font-medium"
+              : isActive
+              ? "bg-white/10 text-white"
+              : "text-white/70 hover:bg-white/10 hover:text-white"
+          }`}
+        >
+          <Building2 className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{client.name}</span>
+        </Link>
+        {/* De beurzen/geo-clones van dit event als sub-projecten (Fase 3). */}
+        {showGeoClones && (
+          <div className="ml-5 mt-0.5 space-y-0.5 border-l border-white/10 pl-2">
+            {geoClones.map((v) => (
+              <Link
+                key={v.abbreviation}
+                href={`/client/${client.id}?geo=${v.abbreviation}`}
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[12px] transition-colors ${
+                  activeGeo === v.abbreviation
+                    ? "bg-rm-orange text-white font-medium"
+                    : "text-white/60 hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <MapPin className="w-3 h-3 shrink-0" />
+                <span className="truncate">{v.brand} {v.location}</span>
+                <span className="ml-auto text-[9px] opacity-60">{v.abbreviation}</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
     );
   }
 

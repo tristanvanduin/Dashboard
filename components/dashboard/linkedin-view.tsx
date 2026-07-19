@@ -1,6 +1,7 @@
 "use client";
 
 import { Briefcase, AlertCircle, ArrowRight } from "lucide-react";
+import { ChannelPerformance } from "./channel-performance";
 
 // LinkedIn Ads-tab. Het datamodel (linkedin_* tabellen) en de sync-laag staan klaar, maar er
 // is nog geen lees-API en nog geen gesyncte data. Dit tabblad toont de structuur en een
@@ -44,6 +45,9 @@ export function LinkedInView({ clientId }: { clientId: string }) {
           </p>
         </div>
       </div>
+
+      {/* Volwaardige prestatie-view: KPI's, pacing, grafiek, maand- en campagnetabel. */}
+      <ChannelPerformance clientId={clientId} channel="linkedin" />
     </div>
   );
 }

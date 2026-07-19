@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Loader2, Megaphone, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
+import { ChannelPerformance } from "./channel-performance";
 
 // Meta Ads-tab: DATA-weergave (connectiestatus + wat het kanaal levert). De analyses
 // (maand-SOP, creative vision, briefing, signalen) draaien vanaf het Analyses-tabblad,
@@ -55,6 +56,9 @@ export function MetaView({ clientId }: { clientId: string }) {
           </p>
         </div>
       </div>
+
+      {/* Volwaardige prestatie-view: KPI's, pacing, grafiek, maand- en campagnetabel. */}
+      <ChannelPerformance clientId={clientId} channel="meta" />
     </div>
   );
 }

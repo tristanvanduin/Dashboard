@@ -30,7 +30,14 @@ function parseStructuredOutput(row: StructuredMonthlyRow | null): MonthlyStructu
   return raw && typeof raw === "object" ? raw as MonthlyStructuredOutput : null;
 }
 
-async function loadLatestMonthlyContext(clientId: string) {
+// Workflow per kanaal: de SOP-engine bewaart full/structured per adapter-sopTypeKey, dus de
+// workflow werkt voor elk kanaal met een maand-SOP. Google blijft de default.
+const CHANNEL_TO_SOP_TYPE: Record<string, string> = { google: "monthly", meta: "meta_monthly", linkedin: "linkedin_monthly" };
+function resolveSopType(channel: string | null | undefined): string {
+  return CHANNEL_TO_SOP_TYPE[(channel ?? "google").toLowerCase()] ?? "monthly";
+}
+
+async function loadLatestMonthlyContext(clientId: string, sopType: string) {
   const supabase = getSupabase();
   if (!supabase) {
     return { supabase: null, error: Response.json({ error: "Supabase niet geconfigureerd" }, { status: 500 }) };
@@ -41,7 +48,7 @@ async function loadLatestMonthlyContext(clientId: string) {
       .from("sop_analysis_output")
       .select("id, created_at, output")
       .eq("client_id", clientId)
-      .eq("sop_type", "monthly")
+      .eq("sop_type", sopType)
       .eq("section", "full")
       .order("created_at", { ascending: false })
       .limit(1)
@@ -50,7 +57,7 @@ async function loadLatestMonthlyContext(clientId: string) {
       .from("sop_analysis_output")
       .select("id, created_at, output")
       .eq("client_id", clientId)
-      .eq("sop_type", "monthly")
+      .eq("sop_type", sopType)
       .eq("section", "structured_monthly_v2")
       .order("created_at", { ascending: false })
       .limit(1)
@@ -58,10 +65,10 @@ async function loadLatestMonthlyContext(clientId: string) {
   ]);
 
   if (fullRes.error || !fullRes.data) {
-    return { supabase, error: Response.json({ error: "Geen monthly full output gevonden" }, { status: 404 }) };
+    return { supabase, error: Response.json({ error: `Geen ${sopType} full output gevonden` }, { status: 404 }) };
   }
   if (structuredRes.error || !structuredRes.data) {
-    return { supabase, error: Response.json({ error: "Geen structured_monthly_v2 output gevonden" }, { status: 404 }) };
+    return { supabase, error: Response.json({ error: `Geen structured_monthly_v2 output (${sopType}) gevonden` }, { status: 404 }) };
   }
 
   const fullRow = fullRes.data as FullMonthlyRow;
@@ -132,6 +139,7 @@ function findPersistedHypothesis(
 
 async function ensurePersistedHypothesisRow(params: {
   supabase: NonNullable<ReturnType<typeof getSupabase>>;
+  source: string;
   clientId: string;
   analysisId: string;
   structuredCreatedAt: string;
@@ -183,6 +191,7 @@ async function ensurePersistedHypothesisRow(params: {
       timeframe: params.hypothesis.label,
       rationale: metadata,
       status: "pending",
+      source: params.source,
     })
     .select("id, client_id, analysis_id, hypothesis, expected_result, measurement_metric, timeframe, rationale, status, accepted_at, created_at")
     .single();
@@ -198,8 +207,9 @@ export async function GET(request: NextRequest) {
   if (!clientId) {
     return Response.json({ error: "client_id is verplicht" }, { status: 400 });
   }
+  const sopType = resolveSopType(request.nextUrl.searchParams.get("channel"));
 
-  const ctx = await loadLatestMonthlyContext(clientId);
+  const ctx = await loadLatestMonthlyContext(clientId, sopType);
   if (ctx.error) return ctx.error;
 
   return Response.json(ctx.payload);
@@ -210,9 +220,11 @@ export async function POST(request: NextRequest) {
   let action = "";
   let hypothesisId = "";
   let rejectedReason = "";
+  let sopType = "monthly";
   try {
     const body = await request.json();
     clientId = String(body.client_id || "");
+    sopType = resolveSopType(typeof body.channel === "string" ? body.channel : null);
     action = String(body.action || "");
     hypothesisId = String(body.hypothesis_id || "");
     rejectedReason = String(body.rejected_reason || "");
@@ -230,7 +242,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "rejected_reason is verplicht bij reject" }, { status: 400 });
   }
 
-  const ctx = await loadLatestMonthlyContext(clientId);
+  const ctx = await loadLatestMonthlyContext(clientId, sopType);
   if (ctx.error || !ctx.supabase) return ctx.error ?? Response.json({ error: "Supabase niet geconfigureerd" }, { status: 500 });
 
   const hypothesis = ctx.structuredOutput.operating_detail.hypotheses_and_next_month_proof.find((item) => item.id === hypothesisId);
@@ -240,6 +252,7 @@ export async function POST(request: NextRequest) {
 
   const persisted = findPersistedHypothesis(ctx.hypothesisRows, ctx.fullRow.id, hypothesis, ctx.structuredRow.created_at)
     ?? await ensurePersistedHypothesisRow({
+      source: sopType === "monthly" ? "analysis" : sopType,
       supabase: ctx.supabase,
       clientId,
       analysisId: ctx.fullRow.id,
@@ -294,7 +307,7 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: expireError.message }, { status: 500 });
     }
 
-    const refreshed = await loadLatestMonthlyContext(clientId);
+    const refreshed = await loadLatestMonthlyContext(clientId, sopType);
     if (refreshed.error) return refreshed.error;
     const updated = refreshed.payload.hypotheses.find((item) => item.id === hypothesisId) ?? null;
     return Response.json({ ok: true, hypothesis: updated });
@@ -461,7 +474,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: acceptError.message, partial: true }, { status: 409 });
   }
 
-  const refreshed = await loadLatestMonthlyContext(clientId);
+  const refreshed = await loadLatestMonthlyContext(clientId, sopType);
   if (refreshed.error) return refreshed.error;
   const updated = refreshed.payload.hypotheses.find((item) => item.id === hypothesisId) ?? null;
   return Response.json({ ok: true, hypothesis: updated });
