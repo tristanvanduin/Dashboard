@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Loader2, Calendar, TrendingUp, Gauge, BarChart3 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { supabase } from "@/lib/supabase";
+import { matchGeoCloneByCampaignName } from "@/lib/rai/geo-clone-catalog";
 
 // Volwaardige prestatie-view voor Meta en LinkedIn: dezelfde bouwstenen als Google
 // (KPI-kaarten, pacing, maandtabel, grafiek, campagnetabel), gevoed uit de dag-tabellen van
@@ -71,7 +72,7 @@ const deltaS = (cur: number | null, prev: number | null): string | null =>
 interface Agg { impressions: number; clicks: number; spend: number; conv: number }
 const emptyAgg = (): Agg => ({ impressions: 0, clicks: 0, spend: 0, conv: 0 });
 
-export function ChannelPerformance({ clientId, channel }: { clientId: string; channel: ChannelKind }) {
+export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: string; channel: ChannelKind; geoClone?: string | null }) {
   const cfg = CONFIG[channel];
   const [account, setAccount] = useState<DailyRow[] | null>(null);
   const [campaign, setCampaign] = useState<DailyRow[]>([]);
@@ -84,10 +85,11 @@ export function ChannelPerformance({ clientId, channel }: { clientId: string; ch
     let cancelled = false;
     setAccount(null); setError(null);
     const since = new Date(Date.now() - 200 * 86_400_000).toISOString().slice(0, 10);
-    const since35 = new Date(Date.now() - 35 * 86_400_000).toISOString().slice(0, 10);
     Promise.all([
       sb.from(cfg.accountTable).select(cfg.select).eq("client_id", clientId).gte("date", since),
-      sb.from(cfg.campaignTable).select(cfg.select).eq("client_id", clientId).gte("date", since35),
+      // Campagne-dagdata over het volle venster: nodig zodra een beurs gekozen is, want de
+      // account-tabel draagt geen campagnenaam en kan dus niet per beurs gesplitst worden.
+      sb.from(cfg.campaignTable).select(cfg.select).eq("client_id", clientId).gte("date", since),
       sb.from(cfg.nameTable).select(`${cfg.nameId}, name`).eq("client_id", clientId),
     ]).then(([accRes, campRes, nameRes]) => {
       if (cancelled) return;
@@ -101,14 +103,31 @@ export function ChannelPerformance({ clientId, channel }: { clientId: string; ch
 
   const convOf = (r: { conversions: number; leads: number }) => (cfg.useLeads ? r.leads : r.conversions);
 
+  // Beurs-scope: de entiteiten waarvan de campagnenaam bij de gekozen geo-clone hoort. Zonder
+  // scope is de bron de account-dagdata; mét scope her-aggregeren we uit de campagne-dagdata
+  // (die wél namen draagt) — zelfde eerlijke aanpak als de Google-beursoverzichten.
+  const matchedEntities = useMemo(() => {
+    if (!geoClone) return null;
+    const set = new Set<string>();
+    for (const [entity, name] of names) {
+      if (matchGeoCloneByCampaignName(name)?.abbreviation === geoClone) set.add(entity);
+    }
+    return set;
+  }, [geoClone, names]);
+
   const derived = useMemo(() => {
-    if (!account || account.length === 0) return null;
+    if (!account) return null;
+    const source: DailyRow[] = geoClone
+      ? campaign.filter((r) => matchedEntities?.has(r.entity))
+      : account;
+    if (geoClone && matchedEntities && matchedEntities.size === 0) return { empty: true } as const;
+    if (source.length === 0) return null;
     const today = new Date().toISOString().slice(0, 10);
     const curMonth = today.slice(0, 7);
 
     // Maand-aggregatie (volle maanden, laatste 6).
     const byMonth = new Map<string, Agg>();
-    for (const r of account) {
+    for (const r of source) {
       const m = r.date.slice(0, 7);
       const a = byMonth.get(m) ?? emptyAgg();
       a.impressions += r.impressions; a.clicks += r.clicks; a.spend += r.spend; a.conv += convOf(r);
@@ -119,7 +138,7 @@ export function ChannelPerformance({ clientId, channel }: { clientId: string; ch
     // KPI-vensters: laatste 28 dagen vs de 28 ervoor.
     const win = (from: number, to: number): Agg => {
       const a = emptyAgg();
-      for (const r of account) {
+      for (const r of source) {
         const age = (new Date(today).getTime() - new Date(r.date).getTime()) / 86_400_000;
         if (age >= from && age < to) { a.impressions += r.impressions; a.clicks += r.clicks; a.spend += r.spend; a.conv += convOf(r); }
       }
@@ -133,15 +152,16 @@ export function ChannelPerformance({ clientId, channel }: { clientId: string; ch
     const prevMonthDate = new Date(today); prevMonthDate.setMonth(prevMonthDate.getMonth() - 1);
     const prevMonth = prevMonthDate.toISOString().slice(0, 7);
     const mtd = emptyAgg(); const prevMtd = emptyAgg();
-    for (const r of account) {
+    for (const r of source) {
       const day = Number(r.date.slice(8, 10));
       if (r.date.slice(0, 7) === curMonth) { mtd.spend += r.spend; mtd.conv += convOf(r); }
       if (r.date.slice(0, 7) === prevMonth && day <= dayOfMonth) { prevMtd.spend += r.spend; prevMtd.conv += convOf(r); }
     }
 
-    // Campagnetabel: laatste 28 dagen per campagne.
+    // Campagnetabel: laatste 28 dagen per campagne (bij beurs-scope alleen de matchende).
+    const campSource = geoClone ? campaign.filter((r) => matchedEntities?.has(r.entity)) : campaign;
     const byCampaign = new Map<string, Agg>();
-    for (const r of campaign) {
+    for (const r of campSource) {
       const age = (new Date(today).getTime() - new Date(r.date).getTime()) / 86_400_000;
       if (age >= 28) continue;
       const a = byCampaign.get(r.entity) ?? emptyAgg();
@@ -150,13 +170,20 @@ export function ChannelPerformance({ clientId, channel }: { clientId: string; ch
     }
     const campaigns = [...byCampaign.entries()].map(([entity, a]) => ({ entity, ...a })).sort((a, b) => b.spend - a.spend);
 
-    return { fullMonths, recent, prior, mtd, prevMtd, campaigns, dayOfMonth };
+    return { empty: false as const, fullMonths, recent, prior, mtd, prevMtd, campaigns, dayOfMonth };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account, campaign, cfg.useLeads]);
+  }, [account, campaign, cfg.useLeads, geoClone, matchedEntities]);
 
   if (error) return <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">{error}</div>;
   if (account === null) {
     return <div className="bg-white rounded-xl border border-border p-8 shadow-sm flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-rm-blue" /></div>;
+  }
+  if (derived?.empty) {
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
+        Geen {channel === "meta" ? "Meta" : "LinkedIn"}-campagnes die bij de gekozen beurs ({geoClone}) horen. De account-cijfers dragen geen campagnenaam en kunnen niet per beurs gesplitst worden.
+      </div>
+    );
   }
   if (!derived) return null; // geen data: de kanaaltab toont al de eerlijke lege staat
 
@@ -176,6 +203,12 @@ export function ChannelPerformance({ clientId, channel }: { clientId: string; ch
 
   return (
     <div className="space-y-6">
+      {geoClone && (
+        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-[11px] text-blue-800">
+          Beurs-scope <strong>{geoClone}</strong> actief: alle cijfers hieronder zijn her-geaggregeerd uit de
+          campagnes die bij deze beurs horen (op basis van de campagnenaam).
+        </div>
+      )}
       {/* KPI-kaarten */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {kpis.map((k) => (

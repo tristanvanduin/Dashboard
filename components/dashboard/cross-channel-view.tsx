@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Loader2, Layers, Info } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { GroupedMonthlyBars } from "./monthly-trend-chart";
 
 // Cross-channel (blended) tab. Leest de blended_account_monthly-view over Google, Meta en
 // LinkedIn heen. De view levert de bouwstenen; de attributie-voetnoot is verplicht, want elk
@@ -54,8 +55,25 @@ export function CrossChannelView({ clientId }: { clientId: string }) {
 
   const months = rows ? [...new Set(rows.map((r) => r.month))] : [];
 
+  // Grafiek-data: spend per kanaal per maand (volle maanden oplopend), voor de gegroepeerde
+  // balken. De maandtabel eronder blijft het detail.
+  const chartMonths = [...months].sort();
+  const chartSeries = [...new Set((rows ?? []).map((r) => CHANNEL_LABEL[r.channel] ?? r.channel))];
+  const chartData = chartMonths.map((m) => {
+    const row: Record<string, number | string> = { maand: m.slice(0, 7) };
+    for (const s of chartSeries) row[s] = 0;
+    for (const r of (rows ?? []).filter((x) => x.month === m)) {
+      const label = CHANNEL_LABEL[r.channel] ?? r.channel;
+      row[label] = (Number(row[label]) || 0) + (r.spend ?? 0);
+    }
+    return row;
+  });
+
   return (
     <div className="space-y-6">
+      {rows && rows.length > 0 && (
+        <GroupedMonthlyBars title="Spend per kanaal per maand" months={chartMonths} series={chartSeries} data={chartData} />
+      )}
       {/* Data-weergave; de cross-channel-signaalanalyse draait via Analyses → Cross-channel. */}
       <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center gap-2">
