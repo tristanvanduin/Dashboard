@@ -386,6 +386,14 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
             description="Vertoning → klik → conversie over de recente 4 weken vs de 4 weken ervoor; een verslechterde fase landt in de wachtrij."
             runLabel="Draai funnel-analyse"
           />
+          <SignalAnalysisCard
+            clientId={clientId}
+            endpoint="/api/analysis/kpi-relations"
+            extra={{ channel: "google" }}
+            title="KPI-verhoudingen"
+            description="Hoe KPI's zich tot elkaar verhouden: CPA-decompositie (klik duurder vs slechter converterend), belofte-kloof, verzadiging, bereik-verdunning en meer."
+            runLabel="Analyseer verhoudingen"
+          />
         </>
       )}
       {analysisChannel === "meta" && (
@@ -398,6 +406,14 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
             title="Funnel-drop-off"
             description="Fase-overgangen (klik → landing → winkelwagen → checkout → conversie) recent vs prior venster; de verslechterde fase landt in de wachtrij."
             runLabel="Draai funnel-analyse"
+          />
+          <SignalAnalysisCard
+            clientId={clientId}
+            endpoint="/api/analysis/kpi-relations"
+            extra={{ channel: "meta" }}
+            title="KPI-verhoudingen"
+            description="Hoe KPI's zich tot elkaar verhouden: CPA-decompositie (klik duurder vs slechter converterend), belofte-kloof, verzadiging, bereik-verdunning en meer."
+            runLabel="Analyseer verhoudingen"
           />
           <SignalAnalysisCard
             clientId={clientId}
@@ -423,6 +439,14 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
             title="Funnel-drop-off"
             description="Vertoning → klik → landingspagina → form-open → lead over twee 28-dagen-vensters; een verslechterde fase landt in de wachtrij."
             runLabel="Draai funnel-analyse"
+          />
+          <SignalAnalysisCard
+            clientId={clientId}
+            endpoint="/api/analysis/kpi-relations"
+            extra={{ channel: "linkedin" }}
+            title="KPI-verhoudingen"
+            description="Hoe KPI's zich tot elkaar verhouden: CPA-decompositie (klik duurder vs slechter converterend), belofte-kloof, verzadiging, bereik-verdunning en meer."
+            runLabel="Analyseer verhoudingen"
           />
           <SignalAnalysisCard
             clientId={clientId}

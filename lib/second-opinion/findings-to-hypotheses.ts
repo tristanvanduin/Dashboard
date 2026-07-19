@@ -125,7 +125,10 @@ export type ProposalSource =
   | "meta_funnel"
   | "linkedin_funnel"
   | "google_funnel"
-  | "quality_score";
+  | "quality_score"
+  | "google_kpi"
+  | "meta_kpi"
+  | "linkedin_kpi";
 
 /**
  * Schrijft nieuwe pending voorstellen weg en vervangt de oude van dezelfde bron,
