@@ -5,6 +5,7 @@ import { Loader2, MapPin, Info, TrendingUp } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { aggregateCampaignMonthlyByGeoClone, type CampaignMonthlyRow } from "@/lib/rai/geo-clone-aggregate";
 import { RAI_GEO_CLONES } from "@/lib/rai/geo-clone-catalog";
+import { SignalAnalysisCard } from "./signal-analysis-card";
 
 // Fase 1c: account-brede kaarten kunnen niet per geo-clone gesplitst worden (de account-tabel
 // draagt geen campagnenaam). Daarom her-aggregeren we de KPI's PER geo-clone uit
@@ -61,6 +62,7 @@ export function GeoCloneOverview({ clientId, geoClone }: { clientId: string; geo
   const monthsDesc = useMemo(() => (summary ? [...summary.months].reverse() : []), [summary]);
 
   return (
+    <div className="space-y-6">
     <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-border flex items-center gap-2">
         <MapPin className="w-5 h-5 text-rm-blue" />
@@ -143,6 +145,17 @@ export function GeoCloneOverview({ clientId, geoClone }: { clientId: string; geo
           </>
         )}
       </div>
+    </div>
+
+    {/* Fase 4: de event-relatieve beursanalyse (editie-over-editie + projectie richting beursdag). */}
+    <SignalAnalysisCard
+      clientId={clientId}
+      endpoint="/api/analysis/geo-clone"
+      extra={{ geo_clone: geoClone }}
+      title={`Beursanalyse ${label}`}
+      description="Event-relatief: aanloop naar deze editie vs dezelfde afstand tot de vorige editie (cadans-bewust), plus projectie richting de beursdag tegen het doel. Bijsturing landt in de goedkeuringswachtrij."
+      runLabel="Draai beursanalyse"
+    />
     </div>
   );
 }

@@ -119,7 +119,8 @@ export type ProposalSource =
   | "landing_audit"
   | "meta_signals"
   | "linkedin_signals"
-  | "cross_channel";
+  | "cross_channel"
+  | "geo_clone";
 
 /**
  * Schrijft nieuwe pending voorstellen weg en vervangt de oude van dezelfde bron,
