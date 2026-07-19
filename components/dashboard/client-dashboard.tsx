@@ -200,8 +200,8 @@ export function ClientDashboard({ client }: { client: Client }) {
           {activeTab === "dashboard" && (
             <div className="space-y-6">
               <ChannelTabs channel={channel} onChange={setChannel} />
-              {channel === "meta" && <MetaView clientId={client.id} />}
-              {channel === "linkedin" && <LinkedInView clientId={client.id} />}
+              {channel === "meta" && <MetaView clientId={client.id} geoClone={geoClone} />}
+              {channel === "linkedin" && <LinkedInView clientId={client.id} geoClone={geoClone} />}
               {channel === "blended" && <CrossChannelView clientId={client.id} />}
               {channel === "google" && (
               <>
@@ -276,8 +276,8 @@ export function ClientDashboard({ client }: { client: Client }) {
                   <SearchTermsTable clientId={client.id} geoClone={geoClone} countryFilter={countryFilter} />
                 </div>
               )}
-              {channel === "meta" && <MetaView clientId={client.id} />}
-              {channel === "linkedin" && <LinkedInView clientId={client.id} />}
+              {channel === "meta" && <MetaView clientId={client.id} geoClone={geoClone} />}
+              {channel === "linkedin" && <LinkedInView clientId={client.id} geoClone={geoClone} />}
               {channel === "blended" && <CrossChannelView clientId={client.id} />}
             </div>
           )}

@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { aggregateCampaignMonthlyByGeoClone, type CampaignMonthlyRow } from "@/lib/rai/geo-clone-aggregate";
 import { RAI_GEO_CLONES } from "@/lib/rai/geo-clone-catalog";
 import { SignalAnalysisCard } from "./signal-analysis-card";
+import { MonthlyTrendChart } from "./monthly-trend-chart";
 
 // Fase 1c: account-brede kaarten kunnen niet per geo-clone gesplitst worden (de account-tabel
 // draagt geen campagnenaam). Daarom her-aggregeren we de KPI's PER geo-clone uit
@@ -111,6 +112,12 @@ export function GeoCloneOverview({ clientId, geoClone }: { clientId: string; geo
               {summary.campaignCount} campagne{summary.campaignCount === 1 ? "" : "s"} over {summary.months.length} maand
               {summary.months.length === 1 ? "" : "en"}.
             </div>
+
+            <MonthlyTrendChart
+              title="Maandverloop"
+              lineLabel="Conversies"
+              data={summary.months.map((m) => ({ maand: m.month.slice(0, 7), spend: m.cost, lijn: m.conversions }))}
+            />
 
             <div className="overflow-x-auto">
               <table className="w-full text-[12px]">

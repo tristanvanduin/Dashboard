@@ -15,7 +15,7 @@ const SECTIONS = [
   "Lead-forms",
 ];
 
-export function LinkedInView({ clientId }: { clientId: string }) {
+export function LinkedInView({ clientId, geoClone }: { clientId: string; geoClone?: string | null }) {
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
@@ -47,7 +47,7 @@ export function LinkedInView({ clientId }: { clientId: string }) {
       </div>
 
       {/* Volwaardige prestatie-view: KPI's, pacing, grafiek, maand- en campagnetabel. */}
-      <ChannelPerformance clientId={clientId} channel="linkedin" />
+      <ChannelPerformance clientId={clientId} channel="linkedin" geoClone={geoClone} />
     </div>
   );
 }

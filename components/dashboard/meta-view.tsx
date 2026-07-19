@@ -10,7 +10,7 @@ import { ChannelPerformance } from "./channel-performance";
 
 const SECTIONS = ["Campagnes", "Ad sets", "Advertenties & creatives", "Breakdowns (leeftijd, plaatsing, device)"];
 
-export function MetaView({ clientId }: { clientId: string }) {
+export function MetaView({ clientId, geoClone }: { clientId: string; geoClone?: string | null }) {
   const [connected, setConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -58,7 +58,7 @@ export function MetaView({ clientId }: { clientId: string }) {
       </div>
 
       {/* Volwaardige prestatie-view: KPI's, pacing, grafiek, maand- en campagnetabel. */}
-      <ChannelPerformance clientId={clientId} channel="meta" />
+      <ChannelPerformance clientId={clientId} channel="meta" geoClone={geoClone} />
     </div>
   );
 }

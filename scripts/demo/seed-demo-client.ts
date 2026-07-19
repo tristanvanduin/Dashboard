@@ -86,7 +86,9 @@ const META_ADS = [
   { id: "demo-ad-carousel-d", name: "Product Carousel D", campaign: "demo-mc-retargeting" },
 ];
 const META_CAMPAIGNS = [
-  { id: "demo-mc-awareness", name: "GreenTech Awareness EU" },
+  // GRT in de naam zodat de beurs-scope (Fase 3) ook op Meta demonstreerbaar is; retargeting
+  // blijft generiek zodat de "hele account vs beurs"-splitsing zichtbaar wordt.
+  { id: "demo-mc-awareness", name: "GRT | Awareness EU" },
   { id: "demo-mc-retargeting", name: "GreenTech Retargeting" },
 ];
 
