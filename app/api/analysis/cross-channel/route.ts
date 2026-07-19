@@ -11,6 +11,7 @@
 import { NextRequest } from "next/server";
 import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { buildCrossChannelSignals, type ChannelMonthlyInput, type BrandMonthlyInput } from "@/lib/signals/cross-channel";
+import { buildCrossChannelFunnelSignals } from "@/lib/signals/cross-channel-funnel";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { audienceContradiction, type ConvertingSegment, type TargetProfile, type AudienceDimension } from "@/lib/cross-channel/audience-coherence";
 import type { ChannelKey } from "@/lib/cross-channel/lens-facts";
@@ -181,9 +182,11 @@ export async function POST(request: NextRequest) {
 
   // ── Detectors + samenvoegen + renderen. ──
   const detected = buildCrossChannelSignals({ channels, brand });
+  // Funnel over de kanalen heen: blended totaal-funnel, fase-achterblijver en divergentie.
+  const funnel = buildCrossChannelFunnelSignals(channels);
   const merged = {
-    triggered: [...detected.triggered, ...audienceStories],
-    checked: [...detected.checked, "cross_audience_samenhang"],
+    triggered: [...detected.triggered, ...funnel.triggered, ...audienceStories],
+    checked: [...detected.checked, ...funnel.checked, "cross_audience_samenhang"],
   };
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Cross-channel");
 

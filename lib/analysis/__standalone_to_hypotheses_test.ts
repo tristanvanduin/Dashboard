@@ -8,6 +8,7 @@ import {
   impressionShareToHypotheses,
   rsaInsightsToHypotheses,
   landingAuditToHypotheses,
+  qualityScoreToHypotheses,
   type LandingAuditItem,
 } from "./standalone-to-hypotheses";
 import type { BudgetFact } from "./budget-allocation-facts";
@@ -109,6 +110,22 @@ console.log("landing-audit:");
 
   const clean = landingAuditToHypotheses([{ url: "https://c", readable: true, priceMismatch: false, overallScore: 9, grootsteGap: null }], opts);
   assert(clean.length === 0, "alles goed => leeg");
+}
+
+console.log("quality score:");
+{
+  const rows = qualityScoreToHypotheses({
+    flags: [{ kind: "dure_lage_qs", detail: "3 keywords met QS<=4 dragen 600 euro spend." }],
+    priorityKeywords: [
+      { keywordText: "kas kopen", campaignName: "GRT", adGroupName: null, matchType: "BROAD", cost: 400, clicks: 80, conversions: 0, qualityScore: 3, converting: false },
+      { keywordText: "tuinbouw beurs", campaignName: "GRT", adGroupName: null, matchType: "EXACT", cost: 300, clicks: 60, conversions: 5, qualityScore: 4, converting: true },
+    ],
+  }, opts);
+  assert(rows.length === 1 && rows[0].source === "quality_score", "één voorstel, bron quality_score");
+  assert(/€400/.test(rows[0].rationale), "waste telt alleen niet-converterende keywords (400, niet 700)");
+  assert(rows[0].ice_impact === 4, "impact 4 onder de waste-drempel");
+  assert(rows[0].ice_ease === 4, "ease 4 (QS is copy/landing-werk)");
+  assert(qualityScoreToHypotheses({ flags: [], priorityKeywords: [] }, opts).length === 0, "geen flags => leeg");
 }
 
 if (failed > 0) { console.error(`\n${failed} assertie(s) gefaald`); process.exit(1); }
