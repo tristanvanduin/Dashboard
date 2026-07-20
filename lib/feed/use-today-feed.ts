@@ -76,9 +76,11 @@ export function useTodayFeed(): TodayFeed {
 
   useEffect(() => {
     const sb = supabase;
-    if (!sb) { setError("Supabase is niet geconfigureerd"); setRawItems([]); return; }
     let cancelled = false;
     setRawItems(null); setError(null);
+    // Let op: géén harde stop meer als Supabase ontbreekt. Demo-mode moet volledig zonder backend
+    // werken (review/presentatie zonder koppelingen). Zonder Supabase én zonder demo valt de feed
+    // netjes terug op de "geen live data"-state via hasRealData = false.
 
     const clients = getVisibleClients();
     const nameById = new Map(clients.map((c) => [c.id, c.name]));
@@ -91,8 +93,8 @@ export function useTodayFeed(): TodayFeed {
       let items: FeedItem[] = [];
       let state: FeedStateRow[] = [];
 
-      // Echte bronnen alleen bevragen als er zichtbare klanten zijn.
-      if (ids.length > 0) {
+      // Echte bronnen alleen bevragen als Supabase geconfigureerd is én er zichtbare klanten zijn.
+      if (sb && ids.length > 0) {
         const [insights, recs, hyps, tasks, stateRes] = await Promise.all([
           sb!.from("sop_insights").select("id, client_id, sop_type, insight_type, title, description, severity, affected_entity, metric, change_pct, action_required, created_at").in("client_id", ids).order("created_at", { ascending: false }).limit(150),
           sb!.from("sop_recommendations").select("id, client_id, sop_type, hypothesis, expected_result, ice_total, status, created_at").in("client_id", ids).eq("status", "open").limit(150),
