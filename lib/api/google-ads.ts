@@ -1,4 +1,4 @@
-import { mapRsaAssetApiRow, mapAdMetaApiRow, type RsaAssetApiResult, type AdMetaApiResult } from "./google-ads-rsa-transform";
+import { mapRsaAssetApiRow, mapAdMetaApiRow, applyAdText, buildAdTextMap, type RsaAssetApiResult, type AdMetaApiResult } from "./google-ads-rsa-transform";
 import { logger } from "@/lib/logger";
 /**
  * Google Ads API client
@@ -2313,7 +2313,7 @@ export async function getCreativePerformanceByMonth(
       ORDER BY metrics.cost_micros DESC
     `);
 
-    return rows.map((row) => {
+    const mapped = rows.map((row) => {
       const c = row.campaign as Record<string, string>;
       const ag = (row.adGroup || row.ad_group) as Record<string, string>;
       const aga = (row.adGroupAd || row.ad_group_ad) as Record<string, unknown>;
@@ -2348,6 +2348,26 @@ export async function getCreativePerformanceByMonth(
         conversionsValue: m.conversionsValue || m.conversions_value || 0,
       };
     });
+
+    // Google geeft de RSA-teksten vaak leeg terug in een gesegmenteerde (per-maand + metrics)
+    // query. Vul ze aan met een APARTE, niet-gesegmenteerde structuur-query per ad_id.
+    const needsText = mapped.some((r) => r.headlines.length === 0 || r.descriptions.length === 0 || r.finalUrls.length === 0);
+    if (!needsText) return mapped;
+    try {
+      const textRows = await queryGoogleAds(credentials, customerId, `
+        SELECT
+          ad_group_ad.ad.id,
+          ad_group_ad.ad.responsive_search_ad.headlines,
+          ad_group_ad.ad.responsive_search_ad.descriptions,
+          ad_group_ad.ad.final_urls
+        FROM ad_group_ad
+        WHERE campaign.status IN ('ENABLED', 'PAUSED')
+          AND ad_group_ad.status = 'ENABLED'
+      `);
+      return applyAdText(mapped, buildAdTextMap(textRows as Array<Record<string, unknown>>));
+    } catch {
+      return mapped; // tekstverrijking is best-effort; de metrics blijven hoe dan ook staan
+    }
   } catch { return []; }
 }
 
