@@ -18,9 +18,14 @@ import { applyMockOwners, mockOperationalItems } from "./owners-mock";
 // pols. Verandert geen analyse/forecast/drempel. Snooze/toewijzing/afronden schrijven alleen
 // naar feed_item_state; de brondata blijft ongemoeid.
 
-// Fase-1 vlag: toon de gelabelde operationele demo-kaarten (tracking-break/budget) tot ze in
-// Fase 2 echt cross-client worden afgeleid. Zet op false om ze te verbergen.
-const SHOW_MOCK_OPERATIONAL = true;
+// Demo-modus staat STANDAARD UIT. De rode band (en de hele feed) moet vanaf dag één echt,
+// schaars en actioneerbaar zijn — geen demo-items, ook niet met een label. Demo-modus blijft
+// bestaan voor presentatie/test en zet zowel de operationele demo-kaarten als de mock-eigenaren
+// aan; hij wordt uitsluitend expliciet geactiveerd via ?demo=1 in de URL.
+function readDemoMode(): boolean {
+  if (typeof window === "undefined") return false;
+  try { return new URLSearchParams(window.location.search).get("demo") === "1"; } catch { return false; }
+}
 
 export interface TodayPulse {
   attention: number;     // klanten met ≥1 echt critical/decision-item
@@ -36,6 +41,7 @@ export interface TodayPulse {
 export interface TodayFeed {
   loading: boolean;
   error: string | null;
+  demoMode: boolean;
   currentUser: string | null;
   bands: Record<FeedSeverity, FeedItem[]>;
   myActions: FeedItem[];
@@ -55,11 +61,13 @@ export function useTodayFeed(): TodayFeed {
   const [clientCount, setClientCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [demoMode, setDemoMode] = useState(false);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     fetch("/api/me").then((r) => r.json()).then((d) => setCurrentUser(d?.email ?? null)).catch(() => {});
+    setDemoMode(readDemoMode());
   }, []);
 
   useEffect(() => {
@@ -116,9 +124,10 @@ export function useTodayFeed(): TodayFeed {
       }
       if (cancelled) return;
 
-      // Mock-eigenaren op echte items + gelabelde operationele demo-kaarten.
-      let withOwners = applyMockOwners(items);
-      if (SHOW_MOCK_OPERATIONAL) withOwners = [...withOwners, ...mockOperationalItems(clients)];
+      // Alleen in demo-modus: mock-eigenaren op echte items + gelabelde operationele demo-kaarten.
+      // Standaard blijft de feed volledig echt (owners komen dan enkel uit feed_item_state).
+      let withOwners = demoMode ? applyMockOwners(items) : items;
+      if (demoMode) withOwners = [...withOwners, ...mockOperationalItems(clients)];
 
       const { items: active, snoozed, autoResolvedCount } = reconcileFeed(withOwners, state, now);
       setStateRows(state);
@@ -128,7 +137,7 @@ export function useTodayFeed(): TodayFeed {
 
     load().catch((e) => { if (!cancelled) { setError(String(e)); setRawItems([]); } });
     return () => { cancelled = true; };
-  }, [tick]);
+  }, [tick, demoMode]);
 
   const derived = useMemo(() => {
     const all = rawItems ?? [];
@@ -140,9 +149,9 @@ export function useTodayFeed(): TodayFeed {
       watch: sortBand(active.filter((i) => i.severity === "watch"), "watch"),
     };
     const now = new Date();
-    // "Mijn acties vandaag" = DEZELFDE feed, gefilterd. Geen tweede bron.
+    // "Mijn acties vandaag" = DEZELFDE feed, gefilterd. Geen tweede bron, en nooit mock-items.
     const myActions = active.filter((i) =>
-      isOverdue(i.dueAt, now) || (currentUser != null && i.ownerName === currentUser)
+      !i.isMock && (isOverdue(i.dueAt, now) || (currentUser != null && i.ownerName === currentUser))
     );
 
     // Pols — alleen ECHTE data telt (mock-kaarten uitgesloten).
@@ -195,6 +204,7 @@ export function useTodayFeed(): TodayFeed {
   return {
     loading: rawItems === null,
     error,
+    demoMode,
     currentUser,
     bands: derived.bands,
     myActions: derived.myActions,

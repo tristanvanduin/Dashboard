@@ -86,9 +86,9 @@ export function TodayFeed() {
       </div>
 
       {feed.error && <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2.5 text-[12px] text-amber-800">{feed.error}</div>}
-      {feed.pulse.hasMock && (
+      {feed.demoMode && (
         <div className="rounded-md border border-purple-200 bg-purple-50 px-4 py-2 text-[11.5px] text-purple-800 flex items-center gap-2">
-          <Info className="w-3.5 h-3.5 shrink-0" /> Fase 1: eigenaren en de <strong>Demo</strong>-gemarkeerde operationele kaarten zijn tijdelijke mockdata. Ze tellen niet mee in de pols-cijfers.
+          <Info className="w-3.5 h-3.5 shrink-0" /> <strong>Demo-modus actief</strong> — mock-eigenaren en <strong>Demo</strong>-operationele kaarten worden getoond voor presentatie. Ze tellen niet mee in de pols. Verwijder <code className="bg-white/60 px-1 rounded">?demo=1</code> uit de URL voor de echte feed.
         </div>
       )}
 
