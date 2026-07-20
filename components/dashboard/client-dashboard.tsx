@@ -24,6 +24,7 @@ import { MetaCreativeAnalyses } from "../insights/meta-creative-analyses";
 import { SignalAnalysisCard } from "./signal-analysis-card";
 import { CreativePerformance } from "./creative-performance";
 import { ChannelForecast } from "./channel-forecast";
+import { CreativeDeepDive } from "./creative-deep-dive";
 import type { InsightChannel } from "@/lib/insights/channel-of";
 import { SprintPlanning } from "../insights/sprint-planning";
 import { CampaignTable } from "./campaign-table";
@@ -403,6 +404,7 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
         <>
           <SopTriggerButtons clientId={clientId} onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
           <StandaloneAnalyses clientId={clientId} />
+          <CreativeDeepDive clientId={clientId} channel="google" />
           <SignalAnalysisCard
             clientId={clientId}
             endpoint="/api/analysis/google-funnel"
@@ -424,6 +426,7 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
         <>
           <SopTriggerButtons clientId={clientId} channel="meta_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
           <MetaCreativeAnalyses clientId={clientId} />
+          <CreativeDeepDive clientId={clientId} channel="meta" />
           <SignalAnalysisCard
             clientId={clientId}
             endpoint="/api/analysis/meta-funnel"
@@ -450,6 +453,7 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
       {analysisChannel === "linkedin" && (
         <>
           <SopTriggerButtons clientId={clientId} channel="linkedin_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
+          <CreativeDeepDive clientId={clientId} channel="linkedin" />
           <SignalAnalysisCard
             clientId={clientId}
             endpoint="/api/analysis/linkedin-icp-fit"
