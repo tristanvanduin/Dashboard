@@ -57,5 +57,21 @@ console.log("volume-drempel:");
   assert(s.best?.name === "Echt", "onder volume-minimum telt niet als beste");
 }
 
+console.log("randgevallen:");
+{
+  // Eén creative met genoeg volume: wel beste, geen zwakste (n < 2).
+  const one = summarizeCreatives([c("Solo", { impressions: 3000, clicks: 90, cost: 100, conversions: 4 })]);
+  assert(one.best?.name === "Solo" && one.worst === null, "één creative: beste gezet, geen zwakste");
+
+  // Nul impressies: geen CTR-ruis en geen crash, maar de kosten tellen wél mee in de totalen.
+  const withZero = summarizeCreatives([
+    c("Echt", { impressions: 2000, clicks: 40, cost: 80, conversions: 2 }),
+    c("Nul-imp", { impressions: 0, clicks: 0, cost: 30, conversions: 0 }),
+  ]);
+  assert(withZero.totals.cost === 110, "nul-impressie-creative telt mee in kostentotaal");
+  assert(withZero.totals.ctr !== null && Number.isFinite(withZero.totals.ctr!), "CTR uit totalen blijft eindig");
+  assert(withZero.best?.name === "Echt", "nul-impressie-creative telt niet als beste");
+}
+
 if (failed > 0) { console.error(`\n${failed} assertie(s) gefaald`); process.exit(1); }
 console.log("\nalle creative-summary-tests geslaagd");

@@ -290,7 +290,12 @@ export function ClientDashboard({ client }: { client: Client }) {
             <div className="space-y-6">
               <ChannelTabs channel={channel} onChange={setChannel} />
               {channel === "google" && <ForecastTable clientId={client.id} />}
-              {channel === "blended" && <CrossChannelView clientId={client.id} />}
+              {channel === "blended" && (
+                <>
+                  <ChannelForecast clientId={client.id} channel="blended" />
+                  <CrossChannelView clientId={client.id} />
+                </>
+              )}
               {(channel === "meta" || channel === "linkedin") && (
                 <ChannelForecast clientId={client.id} channel={channel} />
               )}
