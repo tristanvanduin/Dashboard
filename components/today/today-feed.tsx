@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Loader2, AlertTriangle, Scale, Eye, CheckCircle2, Info } from "lucide-react";
+import Link from "next/link";
+import { Loader2, AlertTriangle, Scale, Eye, CheckCircle2, DatabaseZap, MoonStar } from "lucide-react";
 import { useTodayFeed } from "@/lib/feed/use-today-feed";
 import type { FeedItem, FeedSeverity, FeedChannel } from "@/lib/feed/feed-item";
 import { FeedCard } from "./feed-card";
@@ -59,6 +60,7 @@ export function TodayFeed() {
   }), [feed.bands, match]);
 
   const myActions = useMemo(() => feed.myActions.filter(match), [feed.myActions, match]);
+  const snoozedVisible = useMemo(() => feed.snoozed.filter(match), [feed.snoozed, match]);
   const totalVisible = bands.critical.length + bands.decision.length + bands.watch.length;
 
   const now = new Date();
@@ -67,6 +69,28 @@ export function TodayFeed() {
 
   if (feed.loading) {
     return <div className="flex items-center justify-center py-20 gap-3"><Loader2 className="w-6 h-6 animate-spin text-rm-blue" /><p className="text-sm text-muted-foreground">Vandaag samenstellen…</p></div>;
+  }
+
+  // Geen live data én geen demo-mode: heldere data-unavailable state i.p.v. stilletjes demo tonen.
+  if (!feed.demoMode && !feed.hasRealData) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-rm-gray">{greeting}{feed.currentUser ? `, ${feed.currentUser.split("@")[0]}` : ""}</h1>
+          <p className="text-[13px] text-muted-foreground capitalize">{dateStr}</p>
+        </div>
+        {feed.error && <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2.5 text-[12px] text-amber-800">{feed.error}</div>}
+        <div className="rounded-xl border border-border bg-white shadow-sm p-10 text-center max-w-xl mx-auto">
+          <div className="w-12 h-12 rounded-full bg-rm-blue/10 flex items-center justify-center mx-auto mb-4"><DatabaseZap className="w-6 h-6 text-rm-blue" /></div>
+          <p className="text-[15px] font-semibold text-rm-gray">Geen live data beschikbaar voor de Vandaag-feed.</p>
+          <p className="text-[13px] text-muted-foreground mt-1.5">Koppel databronnen of bekijk een demo van de triagecockpit.</p>
+          <div className="flex gap-2.5 justify-center mt-5">
+            <Link href="/?demo=1" className="text-[13px] font-semibold text-white bg-rm-blue rounded-lg px-4 py-2 hover:brightness-110">Bekijk demo</Link>
+            <Link href="/portfolio" className="text-[13px] font-semibold text-rm-gray border border-border rounded-lg px-4 py-2 hover:border-rm-blue hover:text-rm-blue">Ga naar portfolio</Link>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -87,8 +111,12 @@ export function TodayFeed() {
 
       {feed.error && <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2.5 text-[12px] text-amber-800">{feed.error}</div>}
       {feed.demoMode && (
-        <div className="rounded-md border border-purple-200 bg-purple-50 px-4 py-2 text-[11.5px] text-purple-800 flex items-center gap-2">
-          <Info className="w-3.5 h-3.5 shrink-0" /> <strong>Demo-modus actief</strong> — mock-eigenaren en <strong>Demo</strong>-operationele kaarten worden getoond voor presentatie. Ze tellen niet mee in de pols. Verwijder <code className="bg-white/60 px-1 rounded">?demo=1</code> uit de URL voor de echte feed.
+        <div className="rounded-lg border border-purple-300 bg-purple-50 px-4 py-3 text-[12.5px] text-purple-900 flex items-start gap-2.5">
+          <MoonStar className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <strong>Demo-modus actief:</strong> deze signalen zijn voorbeelddata en tellen niet mee als echte businessdata. De cijfers hieronder zijn <strong>demo-cijfers</strong>.
+            <Link href="/" className="ml-2 font-semibold underline whitespace-nowrap">Terug naar de echte feed →</Link>
+          </div>
         </div>
       )}
 
@@ -127,6 +155,29 @@ export function TodayFeed() {
               <CheckCircle2 className="w-4.5 h-4.5" />
               Onder deze lijn: {feed.pulse.onTrack} klanten op koers, niets dat vandaag je aandacht vraagt.
             </div>
+          )}
+
+          {/* Gesnoozed — komt terug op de ingestelde tijd */}
+          {snoozedVisible.length > 0 && (
+            <section>
+              <div className="flex items-center gap-2.5 mb-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-gray-300" />
+                <h2 className="text-sm font-bold text-rm-gray">Gesnoozed</h2>
+                <span className="text-[11px] font-bold rounded-full px-2 py-0.5 tabular-nums bg-gray-200 text-rm-gray">{snoozedVisible.length}</span>
+                <span className="text-[11px] text-muted-foreground ml-auto">komt terug op de ingestelde tijd</span>
+              </div>
+              <div className="space-y-2">
+                {snoozedVisible.map((item) => (
+                  <div key={item.id} className="bg-white rounded-xl border border-border border-l-[3px] border-l-gray-300 shadow-sm p-3 flex items-center gap-3 opacity-80">
+                    <span className="text-[13px] font-semibold text-rm-gray truncate max-w-[32%]">{item.clientName}</span>
+                    <span className="text-[12px] text-muted-foreground truncate flex-1 min-w-0">{item.title}</span>
+                    {item.snoozeReason && <span className="text-[11px] text-gray-400 italic truncate hidden sm:inline">&ldquo;{item.snoozeReason}&rdquo;</span>}
+                    {item.snoozedUntil && <span className="text-[11px] font-mono text-gray-400 shrink-0">tot {item.snoozedUntil.slice(0, 10)}</span>}
+                    {item.isMock && <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 shrink-0">Demo</span>}
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
         </div>
 

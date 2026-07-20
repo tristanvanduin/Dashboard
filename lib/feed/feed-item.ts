@@ -169,11 +169,12 @@ export function sortBand(items: FeedItem[], band: FeedSeverity): FeedItem[] {
 const ts = (s: string): number => new Date(s).getTime();
 const dueRank = (i: FeedItem): number => (i.dueAt ? new Date(i.dueAt).getTime() : Number.MAX_SAFE_INTEGER);
 
-// "Risico open (gemeten)": som van gemeten euro-risico van open critical-items. Eerlijk:
-// alleen measured én níet-mock telt mee; geschat effect en demo-kaarten worden nooit als feit
-// meegeteld. Kan in een verse omgeving 0 zijn — dat is de waarheid, geen bug.
+// "Risico open (gemeten)": som van gemeten euro-risico van open critical-items. Alleen measured
+// telt mee; geschat effect wordt nooit als feit meegeteld. De scheiding demo↔echt zit in de
+// INJECTIE: buiten demo-mode bestaan er geen isMock-items, dus dan telt alleen echte data mee.
+// In demo-mode zijn de items demo en tellen ze als demo-cijfer (de banner geeft die context).
 export function measuredRiskOpen(items: FeedItem[]): number {
   return items
-    .filter((i) => !i.isMock && i.severity === "critical" && i.impactType === "measured" && i.impactDirection === "risk" && i.impactValue != null)
+    .filter((i) => i.severity === "critical" && i.impactType === "measured" && i.impactDirection === "risk" && i.impactValue != null)
     .reduce((sum, i) => sum + (i.impactValue ?? 0), 0);
 }

@@ -6,7 +6,7 @@
 
 import { insightToFeedItem, recommendationToFeedItem, hypothesisToFeedItem, taskToFeedItem, overviewToFeedItems } from "./adapters";
 import { applyFeedState, reconcileFeed, sortBand, measuredRiskOpen, type FeedItem, type FeedStateRow } from "./feed-item";
-import { mockOperationalItems, mockOwnerFor } from "./owners-mock";
+import { demoFeedItems, mockOwnerFor } from "./owners-mock";
 
 let failed = 0;
 function assert(cond: boolean, msg: string) {
@@ -81,14 +81,16 @@ console.log("sortering per band:");
   assert(sorted[1] === "b" && sorted[2] === "a", "bij gelijke impact: hoogste ICE eerst");
 }
 
-console.log("eerlijke Risico open + mock-isolatie:");
+console.log("Risico open telt measured (echt + demo in demo-mode), nooit geschat:");
 {
   const realRisk: FeedItem = { ...recommendationToFeedItem({ id: "r1", client_id: "c1", sop_type: null, hypothesis: "x", expected_result: "", ice_total: 0, status: "open" }, "K"), severity: "critical", impactType: "measured", impactDirection: "risk", impactValue: 430 };
   const estimated: FeedItem = { ...realRisk, id: "r2", impactType: "estimated", impactValue: 9999 };
-  const mockItem = mockOperationalItems([{ id: "c1", name: "K" }])[0];
-  const total = measuredRiskOpen([realRisk, estimated, { ...mockItem, impactValue: 9999 }]);
-  assert(total === 430, "alleen measured, niet-mock, niet-geschat telt mee in Risico open");
-  assert(mockItem.isMock === true, "operationele demo-kaart is als mock gemarkeerd");
+  assert(measuredRiskOpen([realRisk, estimated]) === 430, "geschat effect telt nooit mee in Risico open");
+
+  // Demo-set: een measured risico-kaart telt mee wanneer hij aanwezig is (dat is alleen in demo-mode).
+  const demo = demoFeedItems([{ id: "c1", name: "K" }], NOW).find((i) => i.impactType === "measured" && i.impactDirection === "risk" && i.impactValue != null)!;
+  assert(demo.isMock === true, "demo-kaart is als mock gemarkeerd");
+  assert(measuredRiskOpen([realRisk, demo]) === 430 + (demo.impactValue ?? 0), "measured demo-risico telt mee binnen demo-context");
   assert(mockOwnerFor("c1") === null || typeof mockOwnerFor("c1")?.name === "string", "mockOwnerFor geeft een teamlid of Niet toegewezen");
 }
 
