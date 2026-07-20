@@ -31,6 +31,8 @@ export const DEMO_CLIENTS: Client[] = [
 ];
 
 import { supabase } from "./supabase";
+import { isDemoMode } from "./demo/demo-mode";
+import { DEMO_GREENTECH_ID, DEMO_GREENTECH_NAME } from "./demo/greentech-mock";
 
 const API_CLIENTS_KEY = "rm-dashboard-api-clients";
 const SUPABASE_CLIENTS_KEY = "api_clients";
@@ -91,10 +93,16 @@ export function clearApiClients(): void {
 
 /**
  * Get all available clients.
- * Only returns real API-connected accounts. No demo/mock data.
+ * Returns real API-connected accounts. In demo-mode (?demo=1 of NEXT_PUBLIC_DEMO_MODE) wordt
+ * de fictieve demo-klant "demo-greentech" toegevoegd zodat de hele app zonder live data te
+ * reviewen is; buiten demo-mode verandert er niets.
  */
 export function getAllClients(): Client[] {
-  return getApiClients();
+  const api = getApiClients();
+  if (isDemoMode() && !api.some((c) => c.id === DEMO_GREENTECH_ID)) {
+    return [{ id: DEMO_GREENTECH_ID, name: DEMO_GREENTECH_NAME, source: "demo" }, ...api];
+  }
+  return api;
 }
 
 /**
