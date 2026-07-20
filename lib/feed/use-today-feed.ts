@@ -11,7 +11,7 @@ import {
   reconcileFeed, sortBand, measuredRiskOpen, isNewSince, isOverdue,
   type FeedItem, type FeedSeverity, type FeedStateRow,
 } from "./feed-item";
-import { applyMockOwners, mockOperationalItems } from "./owners-mock";
+import { applyMockOwners, demoFeedItems, DEMO_AUTO_RESOLVED } from "./owners-mock";
 
 // De IO-laag van de Vandaag-feed. Haalt de bestaande bronnen CROSS-CLIENT op (zichtbare
 // klanten), vertaalt ze via de pure adapters, legt feed_item_state eroverheen en berekent de
@@ -23,6 +23,8 @@ import { applyMockOwners, mockOperationalItems } from "./owners-mock";
 // bestaan voor presentatie/test en zet zowel de operationele demo-kaarten als de mock-eigenaren
 // aan; hij wordt uitsluitend expliciet geactiveerd via ?demo=1 in de URL.
 function readDemoMode(): boolean {
+  // Env-/dev-flag voor lokale ontwikkeling en presentaties zonder live data.
+  if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") return true;
   if (typeof window === "undefined") return false;
   try { return new URLSearchParams(window.location.search).get("demo") === "1"; } catch { return false; }
 }
@@ -42,6 +44,7 @@ export interface TodayFeed {
   loading: boolean;
   error: string | null;
   demoMode: boolean;
+  hasRealData: boolean;
   currentUser: string | null;
   bands: Record<FeedSeverity, FeedItem[]>;
   myActions: FeedItem[];
@@ -62,6 +65,7 @@ export function useTodayFeed(): TodayFeed {
   const [error, setError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [demoMode, setDemoMode] = useState(false);
+  const [hasRealData, setHasRealData] = useState(false);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
@@ -80,58 +84,62 @@ export function useTodayFeed(): TodayFeed {
     const nameById = new Map(clients.map((c) => [c.id, c.name]));
     const ids = clients.map((c) => c.id);
     setClientCount(ids.length);
-    if (ids.length === 0) { setRawItems([]); return; }
     const now = new Date();
     const nm = (id: string) => nameById.get(id) ?? id;
 
     async function load() {
-      // Bron-tabellen cross-client (alleen open/pending + recent, met limieten).
-      const [insights, recs, hyps, tasks, stateRes] = await Promise.all([
-        sb!.from("sop_insights").select("id, client_id, sop_type, insight_type, title, description, severity, affected_entity, metric, change_pct, action_required, created_at").in("client_id", ids).order("created_at", { ascending: false }).limit(150),
-        sb!.from("sop_recommendations").select("id, client_id, sop_type, hypothesis, expected_result, ice_total, status, created_at").in("client_id", ids).eq("status", "open").limit(150),
-        sb!.from("sprint_hypotheses").select("id, client_id, source, hypothesis, expected_result, rationale, ice_total, status, created_at").in("client_id", ids).eq("status", "pending").limit(150),
-        sb!.from("sop_tasks").select("id, client_id, title, description, priority, due_date, status").in("client_id", ids).eq("status", "open").limit(150),
-        sb!.from("feed_item_state").select("*").in("client_id", ids),
-      ]);
+      let items: FeedItem[] = [];
+      let state: FeedStateRow[] = [];
 
-      if (cancelled) return;
-      const firstErr = insights.error || recs.error || hyps.error || tasks.error;
-      if (firstErr) { setError(firstErr.message); setRawItems([]); return; }
+      // Echte bronnen alleen bevragen als er zichtbare klanten zijn.
+      if (ids.length > 0) {
+        const [insights, recs, hyps, tasks, stateRes] = await Promise.all([
+          sb!.from("sop_insights").select("id, client_id, sop_type, insight_type, title, description, severity, affected_entity, metric, change_pct, action_required, created_at").in("client_id", ids).order("created_at", { ascending: false }).limit(150),
+          sb!.from("sop_recommendations").select("id, client_id, sop_type, hypothesis, expected_result, ice_total, status, created_at").in("client_id", ids).eq("status", "open").limit(150),
+          sb!.from("sprint_hypotheses").select("id, client_id, source, hypothesis, expected_result, rationale, ice_total, status, created_at").in("client_id", ids).eq("status", "pending").limit(150),
+          sb!.from("sop_tasks").select("id, client_id, title, description, priority, due_date, status").in("client_id", ids).eq("status", "open").limit(150),
+          sb!.from("feed_item_state").select("*").in("client_id", ids),
+        ]);
+        if (cancelled) return;
+        const firstErr = insights.error || recs.error || hyps.error || tasks.error;
+        if (firstErr) { setError(firstErr.message); setHasRealData(false); setRawItems([]); return; }
 
-      // feed_item_state kan nog niet bestaan (migratie 029 niet toegepast) — degradeer netjes.
-      const state: FeedStateRow[] = stateRes.error ? [] : ((stateRes.data ?? []) as unknown as FeedStateRow[]);
+        // feed_item_state kan nog niet bestaan (migratie 029 niet toegepast) — degradeer netjes.
+        state = stateRes.error ? [] : ((stateRes.data ?? []) as unknown as FeedStateRow[]);
+        items = [
+          ...((insights.data ?? []) as unknown as InsightRow[]).map((r) => insightToFeedItem(r, nm(r.client_id))),
+          ...((recs.data ?? []) as unknown as RecommendationRow[]).map((r) => recommendationToFeedItem(r, nm(r.client_id))),
+          ...((hyps.data ?? []) as unknown as HypothesisRow[]).map((r) => hypothesisToFeedItem(r, nm(r.client_id))),
+          ...((tasks.data ?? []) as unknown as TaskRow[]).map((r) => taskToFeedItem(r, nm(r.client_id), now)),
+        ];
 
-      const items: FeedItem[] = [
-        ...((insights.data ?? []) as unknown as InsightRow[]).map((r) => insightToFeedItem(r, nm(r.client_id))),
-        ...((recs.data ?? []) as unknown as RecommendationRow[]).map((r) => recommendationToFeedItem(r, nm(r.client_id))),
-        ...((hyps.data ?? []) as unknown as HypothesisRow[]).map((r) => hypothesisToFeedItem(r, nm(r.client_id))),
-        ...((tasks.data ?? []) as unknown as TaskRow[]).map((r) => taskToFeedItem(r, nm(r.client_id), now)),
-      ];
-
-      // Operationele signalen uit de overview-endpoint (echt, 1 call voor alle Google-klanten).
-      const gads = clients.filter((c) => c.id.startsWith("gads-"));
-      if (gads.length > 0) {
-        try {
-          const customerIds = gads.map((c) => c.id.replace("gads-", "")).join(",");
-          const res = await fetch(`/api/google-ads/overview?customerIds=${customerIds}`);
-          const data = await res.json();
-          for (const acc of (data.accounts ?? []) as Array<OverviewLike & { customerId: string }>) {
-            const cid = `gads-${acc.customerId}`;
-            if (!ids.includes(cid)) continue;
-            items.push(...overviewToFeedItems(cid, nm(cid), acc));
-          }
-        } catch { /* overview optioneel; feed werkt zonder */ }
+        // Operationele signalen uit de overview-endpoint (echt, 1 call voor alle Google-klanten).
+        const gads = clients.filter((c) => c.id.startsWith("gads-"));
+        if (gads.length > 0) {
+          try {
+            const customerIds = gads.map((c) => c.id.replace("gads-", "")).join(",");
+            const res = await fetch(`/api/google-ads/overview?customerIds=${customerIds}`);
+            const data = await res.json();
+            for (const acc of (data.accounts ?? []) as Array<OverviewLike & { customerId: string }>) {
+              const cid = `gads-${acc.customerId}`;
+              if (!ids.includes(cid)) continue;
+              items.push(...overviewToFeedItems(cid, nm(cid), acc));
+            }
+          } catch { /* overview optioneel; feed werkt zonder */ }
+        }
+        if (cancelled) return;
       }
-      if (cancelled) return;
 
-      // Alleen in demo-modus: mock-eigenaren op echte items + gelabelde operationele demo-kaarten.
-      // Standaard blijft de feed volledig echt (owners komen dan enkel uit feed_item_state).
-      let withOwners = demoMode ? applyMockOwners(items) : items;
-      if (demoMode) withOwners = [...withOwners, ...mockOperationalItems(clients)];
+      // hasRealData wordt bepaald door de ECHTE bronnen, vóór enige demo-injectie.
+      setHasRealData(items.length > 0);
 
-      const { items: active, snoozed, autoResolvedCount } = reconcileFeed(withOwners, state, now);
+      // Demo-injectie UITSLUITEND in demo-mode: echte items krijgen (demo) eigenaren, plus de
+      // volledige zelfstandige demo-set. Buiten demo-mode blijft de feed 100% echt.
+      const feedItems = demoMode ? [...applyMockOwners(items), ...demoFeedItems(clients, now)] : items;
+
+      const { items: active, snoozed, autoResolvedCount } = reconcileFeed(feedItems, state, now);
       setStateRows(state);
-      setAutoResolved(autoResolvedCount);
+      setAutoResolved(demoMode ? DEMO_AUTO_RESOLVED : autoResolvedCount);
       setRawItems(active.concat(snoozed)); // snoozed apart weer gefilterd in useMemo
     }
 
@@ -149,19 +157,20 @@ export function useTodayFeed(): TodayFeed {
       watch: sortBand(active.filter((i) => i.severity === "watch"), "watch"),
     };
     const now = new Date();
-    // "Mijn acties vandaag" = DEZELFDE feed, gefilterd. Geen tweede bron, en nooit mock-items.
+    // "Mijn acties vandaag" = DEZELFDE feed, gefilterd. Geen tweede bron. Buiten demo-mode
+    // bestaan er geen demo-items, dus dit blijft daar automatisch echt.
     const myActions = active.filter((i) =>
-      !i.isMock && (isOverdue(i.dueAt, now) || (currentUser != null && i.ownerName === currentUser))
+      isOverdue(i.dueAt, now) || (currentUser != null && i.ownerName === currentUser)
     );
 
-    // Pols — alleen ECHTE data telt (mock-kaarten uitgesloten).
-    const real = active.filter((i) => !i.isMock);
-    const attentionItems = real.filter((i) => i.severity === "critical" || i.severity === "decision");
+    // Pols. De scheiding demo↔echt zit in de INJECTIE: buiten demo-mode zijn er geen demo-items,
+    // dus tellen deze cijfers alleen echte data. In demo-mode zijn het demo-cijfers (banner-context).
+    const attentionItems = active.filter((i) => i.severity === "critical" || i.severity === "decision");
     const attentionClients = new Set(attentionItems.map((i) => i.clientId));
     const newByBand: Record<FeedSeverity, number> = {
-      critical: real.filter((i) => i.severity === "critical" && isNewSince(i.createdAt, now)).length,
-      decision: real.filter((i) => i.severity === "decision" && isNewSince(i.createdAt, now)).length,
-      watch: real.filter((i) => i.severity === "watch" && isNewSince(i.createdAt, now)).length,
+      critical: active.filter((i) => i.severity === "critical" && isNewSince(i.createdAt, now)).length,
+      decision: active.filter((i) => i.severity === "decision" && isNewSince(i.createdAt, now)).length,
+      watch: active.filter((i) => i.severity === "watch" && isNewSince(i.createdAt, now)).length,
     };
     const pulse: TodayPulse = {
       attention: attentionClients.size,
@@ -205,6 +214,7 @@ export function useTodayFeed(): TodayFeed {
     loading: rawItems === null,
     error,
     demoMode,
+    hasRealData,
     currentUser,
     bands: derived.bands,
     myActions: derived.myActions,
