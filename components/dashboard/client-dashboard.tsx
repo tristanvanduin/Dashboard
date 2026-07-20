@@ -23,6 +23,7 @@ import { ChannelFilter } from "../insights/channel-filter";
 import { MetaCreativeAnalyses } from "../insights/meta-creative-analyses";
 import { SignalAnalysisCard } from "./signal-analysis-card";
 import { CreativePerformance } from "./creative-performance";
+import { ChannelForecast } from "./channel-forecast";
 import type { InsightChannel } from "@/lib/insights/channel-of";
 import { SprintPlanning } from "../insights/sprint-planning";
 import { CampaignTable } from "./campaign-table";
@@ -291,9 +292,7 @@ export function ClientDashboard({ client }: { client: Client }) {
               {channel === "google" && <ForecastTable clientId={client.id} />}
               {channel === "blended" && <CrossChannelView clientId={client.id} />}
               {(channel === "meta" || channel === "linkedin") && (
-                <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
-                  Prognose voor {channel === "meta" ? "Meta" : "LinkedIn"} volgt zodra de sync en de kanaal-analyse-laag live zijn.
-                </div>
+                <ChannelForecast clientId={client.id} channel={channel} />
               )}
             </div>
           )}
