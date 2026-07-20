@@ -283,6 +283,13 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
   const anyRunning = Object.values(status).some((s) => s.running) ||
     channelCfg.types.some((t) => isJobRunning(`sop-${channelCfg.sopTypeKey[t]}-${clientId}`));
 
+  // Monthly is de primaire cadans (de deliverable); weekly/biweekly liggen in de praktijk stil
+  // en staan daarom ingeklapt achter een toggle i.p.v. als gelijkwaardige knoppen.
+  const [showExtraCadences, setShowExtraCadences] = useState(false);
+  const primaryTypes = channelCfg.types.filter((t) => t === "monthly");
+  const extraTypes = channelCfg.types.filter((t) => t !== "monthly");
+  const visibleTypes = [...primaryTypes, ...(showExtraCadences ? extraTypes : [])];
+
   return (
     <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
       <div className="px-5 py-3 border-b border-border">
@@ -292,7 +299,7 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
         </p>
       </div>
       <div className="px-5 py-4 flex gap-3 flex-wrap">
-        {channelCfg.types.map((type) => {
+        {visibleTypes.map((type) => {
           const config = SOP_CONFIG[type];
           const s = status[type];
           const progressJob = progressByType[type];
@@ -378,6 +385,14 @@ export function SopTriggerButtons({ clientId, onAnalysisComplete, onAnalysisErro
             </div>
           );
         })}
+        {extraTypes.length > 0 && (
+          <button
+            onClick={() => setShowExtraCadences((v) => !v)}
+            className="self-start px-3 py-2 rounded-lg border border-dashed border-border text-[11px] text-muted-foreground hover:text-rm-gray hover:border-rm-blue/40 transition-colors"
+          >
+            {showExtraCadences ? "Extra cadansen verbergen" : "Weekly / bi-weekly tonen"}
+          </button>
+        )}
       </div>
     </div>
   );
