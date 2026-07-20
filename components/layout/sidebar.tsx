@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Settings, Building2, Search, FileCode2, FolderOpen, FolderClosed, ChevronDown, ChevronRight, MapPin } from "lucide-react";
+import { Settings, Building2, Search, FileCode2, FolderOpen, FolderClosed, ChevronDown, ChevronRight, MapPin, ListChecks, LayoutGrid } from "lucide-react";
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { getVisibleClients, loadVisibleClientIds } from "@/lib/visible-clients";
 import { loadApiClients } from "@/lib/clients";
@@ -195,6 +195,28 @@ function SidebarInner() {
             className="w-full bg-white/10 text-white text-sm rounded-lg pl-9 pr-3 py-2 placeholder:text-white/40 border border-white/10 focus:outline-none focus:border-rm-orange"
           />
         </div>
+      </div>
+
+      {/* Primaire nav: de dagelijkse cockpit + het klassieke scorebord */}
+      <div className="px-3 pb-2 space-y-0.5">
+        <Link
+          href="/"
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+            pathname === "/" ? "bg-rm-orange text-white font-medium" : "text-white/70 hover:bg-white/10 hover:text-white"
+          }`}
+        >
+          <ListChecks className="w-4 h-4" />
+          Vandaag
+        </Link>
+        <Link
+          href="/portfolio"
+          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+            pathname === "/portfolio" ? "bg-rm-orange text-white font-medium" : "text-white/70 hover:bg-white/10 hover:text-white"
+          }`}
+        >
+          <LayoutGrid className="w-4 h-4" />
+          Portfolio
+        </Link>
       </div>
 
       {/* Client list with groups */}
