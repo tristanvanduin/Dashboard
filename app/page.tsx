@@ -98,6 +98,7 @@ export default function HomePage() {
   const [overviews, setOverviews] = useState<Map<string, AccountOverview>>(new Map());
   const [sortBy, setSortBy] = useState<"name" | "conversions" | "revenue" | "roas" | "cpa" | "yoy">("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [showEmpty, setShowEmpty] = useState(false);
 
   useEffect(() => {
     const visible = getVisibleClients();
@@ -149,6 +150,18 @@ export default function HomePage() {
     }
     return sortDir === "asc" ? va - vb : vb - va;
   });
+
+  // Een "spook-klant" is een Google-account waarvan de overview POSITIEF nul spend toont.
+  // Alleen verbergen als we het echt konden vaststellen — faalt de fetch (geen overview),
+  // dan verbergen we niets. Puur weergave: de data blijft ongemoeid, de toggle zet het terug.
+  function isEmptyAccount(client: Client): boolean {
+    if (!client.id.startsWith("gads-")) return false;
+    const o = overviews.get(client.id);
+    if (!o) return false;
+    return !(o.ytd && o.ytd.adSpend > 0);
+  }
+  const emptyCount = clients.filter(isEmptyAccount).length;
+  const displayClients = showEmpty ? sortedClients : sortedClients.filter((c) => !isEmptyAccount(c));
 
   const SortHeader = ({ col, label, align }: { col: typeof sortBy; label: string; align?: string }) => (
     <th
@@ -254,7 +267,7 @@ export default function HomePage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {sortedClients.map((client) => {
+            {displayClients.map((client) => {
               const overview = overviews.get(client.id);
               const ytd = overview?.ytd;
               const yoy = overview?.yoy;
@@ -331,6 +344,21 @@ export default function HomePage() {
             })}
           </tbody>
         </table>
+        {emptyCount > 0 && (
+          <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-gray-50/50 text-[11px] text-muted-foreground">
+            <span>
+              {showEmpty
+                ? `${emptyCount} lege ${emptyCount === 1 ? "account" : "accounts"} zonder spend worden getoond.`
+                : `${emptyCount} lege ${emptyCount === 1 ? "account" : "accounts"} zonder spend ${emptyCount === 1 ? "is" : "zijn"} verborgen.`}
+            </span>
+            <button
+              onClick={() => setShowEmpty((v) => !v)}
+              className="font-semibold text-rm-blue hover:underline"
+            >
+              {showEmpty ? "Verberg lege accounts" : "Toon alles"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

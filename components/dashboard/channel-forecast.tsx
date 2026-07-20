@@ -9,12 +9,22 @@ import { MonthlyTrendChart } from "./monthly-trend-chart";
 // Run-rate-prognose voor Meta/LinkedIn: lopende maand op tempo + volgende maand via een lichte
 // trend. Eerlijk over de beperking (geen meerjarige historie, dus geen seizoenscorrectie).
 
-type ChannelKind = "meta" | "linkedin";
+type ChannelKind = "meta" | "linkedin" | "blended";
 
-interface Cfg { table: string; select: string; convField: string; convLabel: string }
+interface Source { table: string; convField: string }
+interface Cfg { sources: Source[]; convLabel: string; label: string }
 const CFG: Record<ChannelKind, Cfg> = {
-  meta: { table: "meta_account_daily", select: "date, spend, conversions", convField: "conversions", convLabel: "Conversies" },
-  linkedin: { table: "linkedin_account_daily", select: "date, spend, one_click_leads", convField: "one_click_leads", convLabel: "Leads" },
+  meta: { sources: [{ table: "meta_account_daily", convField: "conversions" }], convLabel: "Conversies", label: "Meta" },
+  linkedin: { sources: [{ table: "linkedin_account_daily", convField: "one_click_leads" }], convLabel: "Leads", label: "LinkedIn" },
+  // Alleen de jonge kanalen samen (beide run-rate, geen YoY). Google blijft apart met zijn
+  // kalender-YoY-model — dat mengen zou de tempo-indicatie valse precisie geven.
+  blended: {
+    sources: [
+      { table: "meta_account_daily", convField: "conversions" },
+      { table: "linkedin_account_daily", convField: "one_click_leads" },
+    ],
+    convLabel: "Acties (conv. + leads)", label: "Meta + LinkedIn",
+  },
 };
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -32,12 +42,21 @@ export function ChannelForecast({ clientId, channel }: { clientId: string; chann
     let cancelled = false;
     setRows(null); setError(null);
     const since = new Date(Date.now() - 220 * 86_400_000).toISOString().slice(0, 10);
-    sb.from(cfg.table).select(cfg.select).eq("client_id", clientId).gte("date", since)
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        if (error) { setError(error.message); setRows([]); return; }
-        setRows(((data ?? []) as unknown as Record<string, unknown>[]).map((r) => ({ date: String(r.date), spend: num(r.spend), conv: num(r[cfg.convField]) })));
-      });
+    // Elke bron normaliseert naar {date, spend, conv} via een alias; bij meerdere bronnen
+    // (blended) worden de dagrijen samengevoegd en later per maand opgeteld.
+    Promise.all(
+      cfg.sources.map((s) =>
+        sb.from(s.table).select(`date, spend, conv:${s.convField}`).eq("client_id", clientId).gte("date", since)
+      )
+    ).then((results) => {
+      if (cancelled) return;
+      const firstError = results.find((r) => r.error)?.error;
+      if (firstError) { setError(firstError.message); setRows([]); return; }
+      const merged = results.flatMap(({ data }) =>
+        ((data ?? []) as unknown as Record<string, unknown>[]).map((r) => ({ date: String(r.date), spend: num(r.spend), conv: num(r.conv) }))
+      );
+      setRows(merged);
+    });
     return () => { cancelled = true; };
   }, [clientId, channel, cfg]);
 
@@ -67,7 +86,7 @@ export function ChannelForecast({ clientId, channel }: { clientId: string; chann
   if (error) return <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">{error}</div>;
   if (rows === null) return <div className="bg-white rounded-xl border border-border p-8 shadow-sm flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-rm-blue" /></div>;
   if (!model) {
-    return <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">Nog geen {channel === "meta" ? "Meta" : "LinkedIn"}-dagdata voor een prognose. Zodra de sync draait, verschijnt hier de run-rate-prognose.</div>;
+    return <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">Nog geen {cfg.label}-dagdata voor een prognose. Zodra de sync draait, verschijnt hier de run-rate-prognose.</div>;
   }
 
   const { spendF, convF, dayOfMonth, daysInMonth, curMtd, monthsCount } = model;
@@ -81,6 +100,7 @@ export function ChannelForecast({ clientId, channel }: { clientId: string; chann
           Run-rate-prognose: de lopende maand geprojecteerd op het tempo tot nu (dag {dayOfMonth} van {daysInMonth}),
           de volgende maand via een lichte trend over {monthsCount} volle maand{monthsCount === 1 ? "" : "en"}.
           Geen meerjarige historie, dus <strong>geen seizoenscorrectie</strong> — dit is een tempo-indicatie, geen doelprognose.
+          {channel === "blended" && " Meta + LinkedIn samen; Google staat apart met zijn kalender-YoY-prognose."}
         </span>
       </div>
 

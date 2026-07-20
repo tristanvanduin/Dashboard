@@ -44,5 +44,20 @@ console.log("combinatie:");
   assert(f.nextMonthMethod === "trend" && f.nextMonthProjected! > 1200, "volgende maand via trend, stijgend");
 }
 
+console.log("randgevallen:");
+{
+  // Volle maand: dag == dagenInMaand => projectie gelijk aan mtd (geen extrapolatie).
+  const full = projectCurrentMonth(900, 30, 30);
+  assert(full.projected === 900 && full.reliable, "dag == dagenInMaand => projectie gelijk aan mtd");
+
+  // Precies 3 maanden => trend (de grens tussen 'laatste' en 'trend').
+  const three = projectNextMonth([{ month: "1", value: 100 }, { month: "2", value: 110 }, { month: "3", value: 120 }]);
+  assert(three.method === "trend", "precies 3 maanden => trend");
+
+  // Vlakke reeks => trend blijft ~gelijk, netjes binnen de band.
+  const flat = projectNextMonth([{ month: "1", value: 200 }, { month: "2", value: 200 }, { month: "3", value: 200 }]);
+  assert(flat.method === "trend" && Math.abs((flat.projected ?? 0) - 200) <= 1, "vlakke reeks => ~gelijk");
+}
+
 if (failed > 0) { console.error(`\n${failed} assertie(s) gefaald`); process.exit(1); }
 console.log("\nalle channel-forecast-tests geslaagd");
