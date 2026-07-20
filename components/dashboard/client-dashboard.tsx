@@ -25,6 +25,7 @@ import { SignalAnalysisCard } from "./signal-analysis-card";
 import { CreativePerformance } from "./creative-performance";
 import { ChannelForecast } from "./channel-forecast";
 import { CreativeDeepDive } from "./creative-deep-dive";
+import { DEMO_GREENTECH_ID } from "@/lib/demo/greentech-mock";
 import type { InsightChannel } from "@/lib/insights/channel-of";
 import { SprintPlanning } from "../insights/sprint-planning";
 import { CampaignTable } from "./campaign-table";
@@ -100,6 +101,60 @@ function ChannelTabs({ channel, onChange }: { channel: Channel; onChange: (c: Ch
   );
 }
 
+// Nieuwe, gegroepeerde IA — VOORLOOPT als demo, uitsluitend voor de demo-greentech-klant.
+// De 11 losse tabs worden vier secties met sub-navigatie; de nieuwe termen (Analyseren /
+// Bevindingen / Doelen & voortgang) vervangen de oude labels. De tab-INHOUD verandert niet —
+// alleen de navigatie hergroepeert (activeTab blijft dezelfde id-set).
+const CLIENT_SECTIONS: { id: string; label: string; icon: React.ReactNode; tabs: Tab[] }[] = [
+  { id: "prestaties", label: "Prestaties", icon: <BarChart3 className="w-4 h-4" />, tabs: ["dashboard", "campaigns", "forecast"] },
+  { id: "analyse", label: "Analyse & advies", icon: <Lightbulb className="w-4 h-4" />, tabs: ["insights", "outcomes", "second-opinion"] },
+  { id: "planning", label: "Planning & rapportage", icon: <Kanban className="w-4 h-4" />, tabs: ["sprint", "dgm", "reporting", "files"] },
+  { id: "instellingen", label: "Instellingen", icon: <Settings className="w-4 h-4" />, tabs: ["settings"] },
+];
+const TAB_LABELS: Record<Tab, string> = {
+  dashboard: "Overzicht", campaigns: "Campagnes", forecast: "Prognose",
+  insights: "Analyseren", outcomes: "Bevindingen", "second-opinion": "Second opinion",
+  sprint: "Sprint", dgm: "Doelen & voortgang", reporting: "Rapporten", files: "Bestanden",
+  settings: "Instellingen",
+};
+
+function GroupedTabNav({ activeTab, onChange, sopErrorCount }: { activeTab: Tab; onChange: (t: Tab) => void; sopErrorCount: number }) {
+  const activeSection = CLIENT_SECTIONS.find((s) => s.tabs.includes(activeTab)) ?? CLIENT_SECTIONS[0];
+  return (
+    <div className="space-y-2">
+      {/* Top: de vier secties */}
+      <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit flex-wrap">
+        {CLIENT_SECTIONS.map((s) => {
+          const active = s.id === activeSection.id;
+          const showBadge = s.tabs.includes("files") && sopErrorCount > 0;
+          return (
+            <button key={s.id} onClick={() => onChange(s.tabs[0])}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${active ? "bg-white text-rm-blue shadow-sm" : "text-muted-foreground hover:text-rm-gray"}`}>
+              {s.icon}{s.label}
+              {showBadge && <span className="ml-1 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-red-500 text-white">{sopErrorCount}</span>}
+            </button>
+          );
+        })}
+      </div>
+      {/* Sub-navigatie binnen de sectie (alleen bij meer dan één) */}
+      {activeSection.tabs.length > 1 && (
+        <div className="flex gap-1 flex-wrap pl-1">
+          {activeSection.tabs.map((t) => {
+            const active = activeTab === t;
+            return (
+              <button key={t} onClick={() => onChange(t)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors ${active ? "bg-rm-blue text-white" : "bg-gray-100 text-muted-foreground hover:text-rm-gray"}`}>
+                {TAB_LABELS[t]}
+                {t === "files" && sopErrorCount > 0 && <span className="px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-red-500 text-white">{sopErrorCount}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ClientDashboard({ client }: { client: Client }) {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [channel, setChannel] = useState<Channel>("google");
@@ -140,7 +195,10 @@ export function ClientDashboard({ client }: { client: Client }) {
         </div>
       )}
 
-      {/* Tab navigation */}
+      {/* Tab navigation — demo-greentech krijgt de nieuwe gegroepeerde IA (voorproefje) */}
+      {client.id === DEMO_GREENTECH_ID ? (
+        <GroupedTabNav activeTab={activeTab} onChange={setActiveTab} sopErrorCount={sopErrors.length} />
+      ) : (
       <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
         {([
           { id: "dashboard", label: "Overzicht", icon: <BarChart3 className="w-4 h-4" /> },
@@ -174,6 +232,7 @@ export function ClientDashboard({ client }: { client: Client }) {
           </button>
         ))}
       </div>
+      )}
 
       {/* Loading state */}
       {clientData.loading && (
