@@ -30,7 +30,6 @@ import type { InsightChannel } from "@/lib/insights/channel-of";
 import { SprintPlanning } from "../insights/sprint-planning";
 import { CampaignTable } from "./campaign-table";
 import { SearchTermsTable } from "./search-terms-table";
-import { ReportExport } from "./report-export";
 import { HealthBadge } from "./health-badge";
 import { PacingMonitor } from "./pacing-monitor";
 import { ClientNotes } from "./client-notes";
@@ -76,10 +75,10 @@ function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title
 type Channel = "google" | "meta" | "linkedin" | "blended";
 
 const CHANNELS: { id: Channel; label: string; icon: React.ReactNode }[] = [
+  { id: "blended", label: "Alle kanalen", icon: <Layers className="w-3.5 h-3.5" /> },
   { id: "google", label: "Google Ads", icon: <BarChart3 className="w-3.5 h-3.5" /> },
   { id: "meta", label: "Meta", icon: <Megaphone className="w-3.5 h-3.5" /> },
   { id: "linkedin", label: "LinkedIn", icon: <Briefcase className="w-3.5 h-3.5" /> },
-  { id: "blended", label: "Alle kanalen", icon: <Layers className="w-3.5 h-3.5" /> },
 ];
 
 function ChannelTabs({ channel, onChange }: { channel: Channel; onChange: (c: Channel) => void }) {
@@ -157,7 +156,7 @@ function GroupedTabNav({ activeTab, onChange, sopErrorCount }: { activeTab: Tab;
 
 export function ClientDashboard({ client }: { client: Client }) {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
-  const [channel, setChannel] = useState<Channel>("google");
+  const [channel, setChannel] = useState<Channel>("blended");
   // Beurs-scope; initieel en live gestuurd door ?geo= uit het menu (Fase 3), daarna ook
   // via de kiezer in de view aanpasbaar.
   const searchParams = useSearchParams();
@@ -403,14 +402,15 @@ export function ClientDashboard({ client }: { client: Client }) {
                 // event-datums) met account-fallback. Het account-niveau blijft eronder zichtbaar.
                 <>
                   <GeoCloneSettingsPanel clientId={client.id} geoClone={geoClone} />
+                  {/* Alleen de account-brede KPI-instellingen als context. Branding en
+                      event/edities zijn hierboven al beurs-specifiek geregeld; die niet
+                      nog eens (en al helemaal niet voor álle beurzen) hieronder herhalen. */}
                   <details className="rounded-xl border border-border bg-gray-50/50">
                     <summary className="cursor-pointer px-5 py-3 text-[12px] font-medium text-muted-foreground">
-                      Account-instellingen (waarvan de beurzen erven) tonen
+                      Account-instellingen (KPI-doelen, conversie-acties — waarvan deze beurs erft) tonen
                     </summary>
                     <div className="p-5 space-y-6">
                       <ClientSettingsPanel clientId={client.id} clientName={client.name} />
-                      <EventSettings clientId={client.id} />
-                      <BrandingView clientId={client.id} clientName={client.name} />
                     </div>
                   </details>
                 </>
@@ -448,7 +448,7 @@ export function ClientDashboard({ client }: { client: Client }) {
 
 function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: (error: SopError) => void }) {
   const [, setRefreshKey] = useState(0);
-  const [analysisChannel, setAnalysisChannel] = useState<Channel>("google");
+  const [analysisChannel, setAnalysisChannel] = useState<Channel>("blended");
 
   // Het kanaal-subtabje kiest alleen WELKE analyses je draait; het uitkomsten-filter blijft
   // standaard op "Alle kanalen" (geen kanaal is belangrijker) en wisselt alleen op eigen klik.
@@ -587,7 +587,6 @@ function OutcomesTab({ clientId }: { clientId: string }) {
         </div>
         <TasksBlock clientId={clientId} selectedInsightId={selectedInsightId} refreshKey={refreshKey} channel={channelFilter} />
       </div>
-      <ReportExport clientId={clientId} />
     </div>
   );
 }
