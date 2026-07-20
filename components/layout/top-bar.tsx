@@ -96,7 +96,8 @@ export function TopBar() {
   }, []);
 
   const getTitle = () => {
-    if (pathname === "/") return "Klantoverzicht";
+    if (pathname === "/") return "Vandaag";
+    if (pathname === "/portfolio") return "Klantoverzicht";
     if (pathname === "/settings") return "Instellingen";
     if (!mounted) return "Dashboard";
     const clientId = pathname.replace("/client/", "");
