@@ -139,3 +139,61 @@ export function adMetaToDbRow(result: AdMetaApiResult, clientId: string): Record
     updated_at: new Date().toISOString(),
   };
 }
+
+// ── RSA-tekstverrijking (bekende Google Ads API-beperking) ────────────────────────────────
+// Google geeft ad_group_ad.ad.responsive_search_ad.headlines vaak LEEG terug zodra de query op
+// segments.month + metrics segmenteert. De betrouwbare oplossing is een APARTE, niet-
+// gesegmenteerde query (alleen structuur, geen metrics) die per ad_id de teksten levert; die
+// mergen we in de creative-rijen waar de inline-tekst leeg is. Puur en los getest.
+
+export interface AdRsaText {
+  headlines: string[];
+  descriptions: string[];
+  finalUrls: string[];
+}
+
+// Trekt de tekst uit een responsive_search_ad.headlines/descriptions-array van {text}-objecten
+// (camelCase en snake_case afgevangen), lege teksten eruit gefilterd.
+export function extractResponsiveTexts(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((i) => (i && typeof i === "object" ? String((i as Record<string, unknown>).text ?? "") : ""))
+    .filter((t) => t.trim().length > 0);
+}
+
+// Bouwt de ad_id -> teksten-map uit de rijen van de niet-gesegmenteerde structuur-query.
+export function buildAdTextMap(rows: Array<Record<string, unknown>>): Map<string, AdRsaText> {
+  const map = new Map<string, AdRsaText>();
+  for (const row of rows) {
+    const aga = (row.adGroupAd ?? row.ad_group_ad) as Record<string, unknown> | undefined;
+    const ad = aga?.ad as Record<string, unknown> | undefined;
+    const adId = String(ad?.id ?? "");
+    if (!adId) continue;
+    const rsa = (ad?.responsiveSearchAd ?? ad?.responsive_search_ad) as Record<string, unknown> | undefined;
+    map.set(adId, {
+      headlines: extractResponsiveTexts(rsa?.headlines),
+      descriptions: extractResponsiveTexts(rsa?.descriptions),
+      finalUrls: ((ad?.finalUrls ?? ad?.final_urls ?? []) as unknown[]).map(String).filter(Boolean),
+    });
+  }
+  return map;
+}
+
+// Vult per creative-rij de lege tekstvelden aan uit de map (op ad_id). Rijen die al tekst
+// hebben blijven ongemoeid; ontbreekt de ad in de map, dan blijft het veld leeg.
+export function applyAdText<T extends { adId: string; headlines: string[]; descriptions: string[]; finalUrls: string[] }>(
+  creatives: T[],
+  textByAd: Map<string, AdRsaText>
+): T[] {
+  return creatives.map((c) => {
+    if (c.headlines.length > 0 && c.descriptions.length > 0 && c.finalUrls.length > 0) return c;
+    const t = textByAd.get(c.adId);
+    if (!t) return c;
+    return {
+      ...c,
+      headlines: c.headlines.length > 0 ? c.headlines : t.headlines,
+      descriptions: c.descriptions.length > 0 ? c.descriptions : t.descriptions,
+      finalUrls: c.finalUrls.length > 0 ? c.finalUrls : t.finalUrls,
+    };
+  });
+}
