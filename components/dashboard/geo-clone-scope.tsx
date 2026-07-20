@@ -24,6 +24,26 @@ export function GeoCloneScope({ value, onChange }: { value: string | null; onCha
       active ? "bg-rm-blue text-white" : "bg-blue-50 text-muted-foreground hover:text-rm-gray"
     }`;
 
+  // Al binnen een beurs? Dan geen redundant beurs-filter meer (je hebt al gekozen, en de
+  // sidebar + het beursoverzicht tonen de context). Alleen een compacte indicatie + uitgang.
+  if (value !== null) {
+    const active = variants.find((v) => v.abbreviation === value);
+    return (
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+          <MapPin className="w-3.5 h-3.5" /> Beurs:
+        </span>
+        <span className="px-2.5 py-1 text-[11px] font-medium rounded-md bg-rm-blue text-white">
+          {active ? `${active.brand} ${active.location} (${active.abbreviation})` : value}
+        </span>
+        <button onClick={() => onChange(null)} className="text-[11px] text-muted-foreground hover:text-rm-blue underline underline-offset-2">
+          ← Hele account
+        </button>
+      </div>
+    );
+  }
+
+  // Op accountniveau: de volledige beurs-kiezer om in een beurs te stappen.
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       <span className="text-[11px] text-muted-foreground flex items-center gap-1">
