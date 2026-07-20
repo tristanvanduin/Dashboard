@@ -11,7 +11,7 @@ import {
   reconcileFeed, sortBand, measuredRiskOpen, isNewSince, isOverdue,
   type FeedItem, type FeedSeverity, type FeedStateRow,
 } from "./feed-item";
-import { applyMockOwners, demoFeedItems, DEMO_AUTO_RESOLVED } from "./owners-mock";
+import { demoFeedItems, DEMO_AUTO_RESOLVED } from "./owners-mock";
 
 // De IO-laag van de Vandaag-feed. Haalt de bestaande bronnen CROSS-CLIENT op (zichtbare
 // klanten), vertaalt ze via de pure adapters, legt feed_item_state eroverheen en berekent de
@@ -135,9 +135,10 @@ export function useTodayFeed(): TodayFeed {
       // hasRealData wordt bepaald door de ECHTE bronnen, vóór enige demo-injectie.
       setHasRealData(items.length > 0);
 
-      // Demo-injectie UITSLUITEND in demo-mode: echte items krijgen (demo) eigenaren, plus de
-      // volledige zelfstandige demo-set. Buiten demo-mode blijft de feed 100% echt.
-      const feedItems = demoMode ? [...applyMockOwners(items), ...demoFeedItems(clients, now)] : items;
+      // Demo-mode = ZUIVER demo: uitsluitend de curated demo-set, nooit echte data erbij —
+      // ongeacht wat er in de DB staat. Zo blijft de demo een schone review en floodt echte
+      // (bijv. maanden-oude, verlopen) data de banden niet. Buiten demo-mode is de feed 100% echt.
+      const feedItems = demoMode ? demoFeedItems(clients, now) : items;
 
       const { items: active, snoozed, autoResolvedCount } = reconcileFeed(feedItems, state, now);
       setStateRows(state);
