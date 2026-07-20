@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { isGreentechDemo, buildGreentechClientData } from "@/lib/demo/greentech-mock";
 import {
   getAccountMetricsByMonth,
   getAccountMetricsByWeek,
@@ -48,6 +49,13 @@ function getCredentials(): GoogleAdsCredentials | null {
  *   customerId - Google Ads customer ID (no dashes)
  */
 export async function GET(request: NextRequest) {
+  // Demo-klant (GreenTech + geo-clones): serveer de curated mock zonder Google Ads te bellen —
+  // geen keys of accountrechten nodig. Scoped op de demo-klant; echte klanten lopen ongewijzigd door.
+  const demoCid = request.nextUrl.searchParams.get("customerId");
+  if (isGreentechDemo(demoCid)) {
+    return Response.json(buildGreentechClientData(demoCid!));
+  }
+
   const credentials = getCredentials();
   if (!credentials) {
     return Response.json({ error: "Google Ads API not configured" }, { status: 500 });
