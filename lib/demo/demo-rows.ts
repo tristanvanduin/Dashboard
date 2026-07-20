@@ -140,14 +140,25 @@ const metaAdDaily: Row[] = META_ADS.flatMap((a) =>
     return { client_id: CID, entity_id: a.id, date: dayISO(149 - d), impressions: Math.round(a.imp * f), link_clicks: Math.round(a.clk * f), spend: Math.round(a.spend * f), conversions: Math.max(0, Math.round(a.conv * f)) };
   })
 );
+const metaDayAgg = (day: number) => META_ADS.reduce((s, a) => {
+  const f = dayFactor(day, a.seed);
+  s.impressions += Math.round(a.imp * f); s.link_clicks += Math.round(a.clk * f);
+  s.spend += Math.round(a.spend * f); s.conversions += Math.max(0, Math.round(a.conv * f));
+  return s;
+}, { impressions: 0, link_clicks: 0, spend: 0, conversions: 0 });
 const metaAccountDaily: Row[] = Array.from({ length: 150 }, (_, d) => {
-  const day = 149 - d;
-  const inDay = METesum(day);
-  return { client_id: CID, date: dayISO(day), spend: inDay.spend, conversions: inDay.conv };
+  const day = 149 - d; const a = metaDayAgg(day);
+  return { client_id: CID, date: dayISO(day), impressions: a.impressions, link_clicks: a.link_clicks, spend: a.spend, conversions: a.conversions, leads: a.conversions };
 });
-function METesum(day: number) {
-  return META_ADS.reduce((s, a) => { const f = dayFactor(day, a.seed); s.spend += Math.round(a.spend * f); s.conv += Math.max(0, Math.round(a.conv * f)); return s; }, { spend: 0, conv: 0 });
-}
+// meta_campaigns + meta_campaign_daily voeden de ChannelPerformance-view (KPI's, maand-/campagnetabel).
+const META_CAMPAIGNS = [
+  { id: "demo-mcamp-aw", name: "Awareness EU", imp: 2500, clk: 48, spend: 117, conv: 7, seed: 0 },
+  { id: "demo-mcamp-rt", name: "Retargeting NL", imp: 800, clk: 30, spend: 44, conv: 6, seed: 4 },
+];
+const metaCampaigns: Row[] = META_CAMPAIGNS.map((c) => ({ client_id: CID, campaign_id: c.id, name: c.name, status: "ACTIVE" }));
+const metaCampaignDaily: Row[] = META_CAMPAIGNS.flatMap((c) =>
+  Array.from({ length: 150 }, (_, d) => { const f = dayFactor(149 - d, c.seed); return { client_id: CID, entity_id: c.id, date: dayISO(149 - d), impressions: Math.round(c.imp * f), link_clicks: Math.round(c.clk * f), spend: Math.round(c.spend * f), conversions: Math.max(0, Math.round(c.conv * f)), leads: Math.max(0, Math.round(c.conv * f)) }; })
+);
 
 const LI_CAMPAIGNS = [{ urn: "urn:li:demo:1", name: "GRT | Leadgen NL" }, { urn: "urn:li:demo:2", name: "GRT | Thought Leadership" }];
 const linkedinCampaigns: Row[] = LI_CAMPAIGNS.map((c) => ({ client_id: CID, campaign_urn: c.urn, name: c.name, status: "ACTIVE", objective_type: "LEAD_GENERATION" }));
@@ -164,9 +175,14 @@ const linkedinCreativeDaily: Row[] = LI_META.flatMap((c) =>
 );
 const linkedinAccountDaily: Row[] = Array.from({ length: 150 }, (_, d) => {
   const day = 149 - d;
-  const agg = LI_META.reduce((s, c) => { const f = dayFactor(day, c.seed); s.spend += Math.round(c.spend * f); s.leads += Math.max(0, Math.round(c.leads * f)); return s; }, { spend: 0, leads: 0 });
-  return { client_id: CID, date: dayISO(day), spend: agg.spend, one_click_leads: agg.leads };
+  const agg = LI_META.reduce((s, c) => { const f = dayFactor(day, c.seed); s.impressions += Math.round(c.imp * f); s.clicks += Math.round(c.clk * f); s.spend += Math.round(c.spend * f); s.leads += Math.max(0, Math.round(c.leads * f)); return s; }, { impressions: 0, clicks: 0, spend: 0, leads: 0 });
+  return { client_id: CID, date: dayISO(day), impressions: agg.impressions, clicks: agg.clicks, spend: agg.spend, external_website_conversions: Math.round(agg.leads * 0.3), one_click_leads: agg.leads };
 });
+// linkedin_campaign_daily voedt de ChannelPerformance-view (per campagne).
+const LI_CAMP_DEFS = LI_CAMPAIGNS.map((c, i) => ({ urn: c.urn, imp: 900 + i * 300, clk: 16 + i * 4, spend: 55 + i * 12, leads: 5 + i * 2, seed: i * 2 }));
+const linkedinCampaignDaily: Row[] = LI_CAMP_DEFS.flatMap((c) =>
+  Array.from({ length: 150 }, (_, d) => { const f = dayFactor(149 - d, c.seed); return { client_id: CID, entity_urn: c.urn, date: dayISO(149 - d), impressions: Math.round(c.imp * f), clicks: Math.round(c.clk * f), spend: Math.round(c.spend * f), external_website_conversions: Math.round(f), one_click_leads: Math.max(0, Math.round(c.leads * f)) }; })
+);
 
 const clientNotes: Row[] = [
   { id: "demo-note-1", client_id: CID, title: "Beursweek", content: "Piek verwacht rond de beursweek — budgetten tijdig ophogen.", created_at: iso(), updated_at: iso() },
@@ -191,10 +207,13 @@ export function demoRows(): Record<string, Row[]> {
     meta_creatives: metaCreatives,
     meta_ad_daily: metaAdDaily,
     meta_account_daily: metaAccountDaily,
+    meta_campaigns: metaCampaigns,
+    meta_campaign_daily: metaCampaignDaily,
     linkedin_campaigns: linkedinCampaigns,
     linkedin_creatives: linkedinCreatives,
     linkedin_creative_daily: linkedinCreativeDaily,
     linkedin_account_daily: linkedinAccountDaily,
+    linkedin_campaign_daily: linkedinCampaignDaily,
     client_notes: clientNotes,
     client_sync_status: clientSyncStatus,
   };

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Loader2, Megaphone, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
 import { ChannelPerformance } from "./channel-performance";
 import { CreativePerformance } from "./creative-performance";
+import { isDemoMode } from "@/lib/demo/demo-mode";
 
 // Meta Ads-tab: DATA-weergave (connectiestatus + wat het kanaal levert). De analyses
 // (maand-SOP, creative vision, briefing, signalen) draaien vanaf het Analyses-tabblad,
@@ -15,6 +16,7 @@ export function MetaView({ clientId, geoClone }: { clientId: string; geoClone?: 
   const [connected, setConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
+    if (isDemoMode()) { setConnected(true); return; } // demo: geen live status-call
     let cancelled = false;
     fetch("/api/meta-ads?action=status")
       .then((r) => r.json())
