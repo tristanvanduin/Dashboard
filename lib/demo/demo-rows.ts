@@ -124,9 +124,9 @@ const rsaAssets: Row[] = CREATIVES.flatMap((c) => [
 
 // ── Meta + LinkedIn: entiteiten + dagseries (voor views, fatigue en forecast) ──
 const META_ADS = [
-  { id: "demo-m-hero", name: "Awareness EU — hero video", creative: "demo-mc-hero", imp: 1100, clk: 22, spend: 55, conv: 3, seed: 0 },
-  { id: "demo-m-life", name: "Awareness EU — lifestyle", creative: "demo-mc-life", imp: 1400, clk: 26, spend: 62, conv: 4, seed: 2 },
-  { id: "demo-m-banner", name: "Retargeting — banner", creative: "demo-mc-banner", imp: 800, clk: 30, spend: 44, conv: 6, seed: 4 },
+  { id: "demo-m-hero", name: "GRT | Awareness EU — hero video", creative: "demo-mc-hero", imp: 1100, clk: 22, spend: 55, conv: 3, seed: 0 },
+  { id: "demo-m-life", name: "GRT | Awareness EU — lifestyle", creative: "demo-mc-life", imp: 1400, clk: 26, spend: 62, conv: 4, seed: 2 },
+  { id: "demo-m-banner", name: "GRT | Retargeting — banner", creative: "demo-mc-banner", imp: 800, clk: 30, spend: 44, conv: 6, seed: 4 },
 ];
 const metaAds: Row[] = META_ADS.map((a) => ({ client_id: CID, ad_id: a.id, name: a.name, creative_id: a.creative }));
 const metaCreatives: Row[] = [
@@ -152,8 +152,8 @@ const metaAccountDaily: Row[] = Array.from({ length: 150 }, (_, d) => {
 });
 // meta_campaigns + meta_campaign_daily voeden de ChannelPerformance-view (KPI's, maand-/campagnetabel).
 const META_CAMPAIGNS = [
-  { id: "demo-mcamp-aw", name: "Awareness EU", imp: 2500, clk: 48, spend: 117, conv: 7, seed: 0 },
-  { id: "demo-mcamp-rt", name: "Retargeting NL", imp: 800, clk: 30, spend: 44, conv: 6, seed: 4 },
+  { id: "demo-mcamp-aw", name: "GRT | Awareness EU", imp: 2500, clk: 48, spend: 117, conv: 7, seed: 0 },
+  { id: "demo-mcamp-rt", name: "GRT | Retargeting NL", imp: 800, clk: 30, spend: 44, conv: 6, seed: 4 },
 ];
 const metaCampaigns: Row[] = META_CAMPAIGNS.map((c) => ({ client_id: CID, campaign_id: c.id, name: c.name, status: "ACTIVE" }));
 const metaCampaignDaily: Row[] = META_CAMPAIGNS.flatMap((c) =>
@@ -189,6 +189,18 @@ const clientNotes: Row[] = [
 ];
 const clientSyncStatus: Row[] = [{ client_id: CID, channel: "google_ads", status: "ok", last_sync_at: iso(), rows_synced: 1240 }];
 
+// Bestanden: precies één set standaardmappen (geen dubbelen) + een paar voorbeeldbestanden,
+// zodat het tabblad Bestanden er in de demo netjes en volledig uitziet.
+const clientFolders: Row[] = ["SOP's", "Briefings", "Sprintplanning", "Rapportages", "Overig"].map((name, i) => ({
+  id: `demo-folder-${i}`, client_id: CID, name, created_at: iso(),
+}));
+const clientFiles: Row[] = [
+  { id: "demo-file-1", client_id: CID, folder: "SOP's", file_name: "SOP_zoeknetwerk_greentech.pdf", file_size: 184320, content_type: "application/pdf", storage_path: `${CID}/SOP's/demo-sop.pdf`, uploaded_at: dayISO(9) },
+  { id: "demo-file-2", client_id: CID, folder: "Briefings", file_name: "Creative_briefing_awareness_EU.docx", file_size: 45210, content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", storage_path: `${CID}/Briefings/demo-briefing.docx`, uploaded_at: dayISO(5) },
+  { id: "demo-file-3", client_id: CID, folder: "Sprintplanning", file_name: "Sprintplanning_Q3_2026.csv", file_size: 12880, content_type: "text/csv", storage_path: `${CID}/Sprintplanning/demo-sprint.csv`, uploaded_at: dayISO(3) },
+  { id: "demo-file-4", client_id: CID, folder: "Rapportages", file_name: "Maandrapportage_juni_2026.pdf", file_size: 962560, content_type: "application/pdf", storage_path: `${CID}/Rapportages/demo-rapport.pdf`, uploaded_at: dayISO(12) },
+];
+
 // De volledige map; tabellen die hier niet in staan → passthrough naar de echte client.
 export function demoRows(): Record<string, Row[]> {
   return {
@@ -216,5 +228,7 @@ export function demoRows(): Record<string, Row[]> {
     linkedin_campaign_daily: linkedinCampaignDaily,
     client_notes: clientNotes,
     client_sync_status: clientSyncStatus,
+    client_folders: clientFolders,
+    client_files: clientFiles,
   };
 }

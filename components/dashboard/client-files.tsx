@@ -231,6 +231,9 @@ export function ClientFiles({ clientId, sopErrors, onDismissError, onDismissAllE
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Onthoudt voor welke klant we de standaardmappen al hebben aangemaakt, zodat een snelle
+  // dubbele mount (React strict mode) niet twee keer dezelfde set inschiet → dubbele mappen.
+  const seededClientRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!supabase) { setLoading(false); return; }
@@ -242,16 +245,27 @@ export function ClientFiles({ clientId, sopErrors, onDismissError, onDismissAllE
 
     let loadedFolders = foldersData ?? [];
 
-    // Ensure all default folders exist (adds missing ones for existing clients too)
+    // Ensure all default folders exist (adds missing ones for existing clients too).
+    // Guard tegen dubbele seeding: maximaal één keer per klant binnen deze mount.
     const existingNames = new Set(loadedFolders.map((f: { name: string }) => f.name));
     const missing = DEFAULT_FOLDERS.filter((name) => !existingNames.has(name));
-    if (missing.length > 0) {
+    if (missing.length > 0 && seededClientRef.current !== clientId) {
+      seededClientRef.current = clientId;
       const inserts = missing.map((name) => ({ client_id: clientId, name }));
       await supabase.from("client_folders").insert(inserts);
       const { data: newFolders } = await supabase
         .from("client_folders").select("*").eq("client_id", clientId).order("name");
       loadedFolders = newFolders ?? [];
     }
+
+    // Ontdubbel op naam (verdedig tegen historisch dubbel geseede mappen); bestanden
+    // verwijzen op mapnaam, dus één zichtbare map per naam is altijd correct.
+    const seenNames = new Set<string>();
+    loadedFolders = loadedFolders.filter((f: { name: string }) => {
+      if (seenNames.has(f.name)) return false;
+      seenNames.add(f.name);
+      return true;
+    });
 
     setFolders(loadedFolders);
     setFiles(filesData ?? []);
