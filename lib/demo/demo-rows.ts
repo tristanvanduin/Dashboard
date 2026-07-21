@@ -165,6 +165,31 @@ const metaCampaignDaily: Row[] = META_CAMPAIGNS.flatMap((c) =>
   Array.from({ length: 150 }, (_, d) => { const f = dayFactor(149 - d, c.seed); return { client_id: CID, entity_id: c.id, date: dayISO(149 - d), impressions: Math.round(c.imp * f), link_clicks: Math.round(c.clk * f), spend: Math.round(c.spend * f), conversions: Math.max(0, Math.round(c.conv * f)), leads: Math.max(0, Math.round(c.conv * f)) }; })
 );
 
+// meta_breakdown_daily: plaatsing/leeftijd/device-segmenten met een dure verspiller
+// (audience_network / desktop) en een efficiënte schaalkans (facebook), zodat de
+// breakdown-efficiëntie-detector in de demo iets zinnigs vindt.
+const META_BD_SEGMENTS = [
+  { type: "publisher_platform", value: "instagram", spend: 20, conv: 0.8 },
+  { type: "publisher_platform", value: "audience_network", spend: 14, conv: 0.12 },
+  { type: "publisher_platform", value: "facebook", spend: 4, conv: 0.28 },
+  { type: "age", value: "25-34", spend: 16, conv: 0.7 },
+  { type: "age", value: "35-44", spend: 12, conv: 0.35 },
+  { type: "age", value: "45-54", spend: 8, conv: 0.1 },
+  { type: "device_platform", value: "mobile", spend: 26, conv: 0.9 },
+  { type: "device_platform", value: "desktop", spend: 8, conv: 0.05 },
+];
+const metaBreakdownDaily: Row[] = META_BD_SEGMENTS.flatMap((s) =>
+  Array.from({ length: 40 }, (_, d) => {
+    const f = dayFactor(39 - d, s.value.length);
+    return {
+      client_id: CID, date: dayISO(39 - d), level: "account", entity_id: "act",
+      breakdown_type: s.type, breakdown_value: s.value,
+      impressions: Math.round(2000 * f), link_clicks: Math.round(40 * f), clicks_all: Math.round(45 * f),
+      spend: Math.round(s.spend * f), conversions: s.conv * f, conversion_value: Math.round(s.conv * f * 120),
+    };
+  })
+);
+
 const LI_CAMPAIGNS = [{ urn: "urn:li:demo:1", name: "GRT | Leadgen NL" }, { urn: "urn:li:demo:2", name: "GRT | Thought Leadership" }];
 const linkedinCampaigns: Row[] = LI_CAMPAIGNS.map((c) => ({ client_id: CID, campaign_urn: c.urn, name: c.name, status: "ACTIVE", objective_type: "LEAD_GENERATION" }));
 const linkedinCreatives: Row[] = [
@@ -267,6 +292,7 @@ export function demoRows(): Record<string, Row[]> {
     meta_account_daily: metaAccountDaily,
     meta_campaigns: metaCampaigns,
     meta_campaign_daily: metaCampaignDaily,
+    meta_breakdown_daily: metaBreakdownDaily,
     linkedin_campaigns: linkedinCampaigns,
     linkedin_creatives: linkedinCreatives,
     linkedin_creative_daily: linkedinCreativeDaily,
