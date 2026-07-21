@@ -350,6 +350,9 @@ const clientSettings: Row[] = [{
   },
   kpi_targets: { conversionsAbsolute: 700, revenueAbsolute: 90000, roasTarget: 4, cpaTarget: 60 },
   channel_conversion_config: { meta_ads: ["conversions", "leads"], linkedin_ads: ["one_click_leads", "external_website_conversions"] },
+  // GA4-insight-layer config (property + key events + funnelstappen). In demo levert data-access
+  // de gemockte GA4-dataset; dit documenteert de vorm van client_settings.ga4_config.
+  ga4_config: { propertyId: "properties/demo-greentech", keyEvents: ["form_submit", "generate_lead"], funnelSteps: ["session_start", "view_item", "form_start", "form_submit"] },
 }];
 
 // De volledige map; tabellen die hier niet in staan → passthrough naar de echte client.

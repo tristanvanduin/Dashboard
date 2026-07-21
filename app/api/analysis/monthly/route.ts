@@ -42,6 +42,8 @@ import {
 import { sanitizeOutput } from "@/lib/analysis/sanitize";
 import { computeComparisonFacts, formatComparisonFacts, computeCampaignMomFacts, computeAdGroupMomFacts } from "@/lib/analysis/comparison-facts";
 import { computeDataReliability, type DataReliabilityAssessment } from "@/lib/analysis/data-reliability";
+import { channelGa4Context } from "@/lib/ga4/context";
+import type { Ga4SupabaseLike } from "@/lib/ga4/data-access";
 import { checkStepDataAvailability } from "@/lib/analysis/data-availability";
 import type { StepDataAvailability } from "@/lib/analysis/data-availability";
 import { checkDataFreshness } from "@/lib/sync/freshness";
@@ -1579,6 +1581,10 @@ ${runningContext}`,
         })
       : ({ promptContext: "## Data reliability\nPrepared monthly context geladen; account- en campagnebetrouwbaarheid is vooraf berekend." } as DataReliabilityAssessment);
     const reliabilityText = reliability.promptContext;
+    // GA4 als verklarende context (website/funnel/tracking/CRO). Verrijkt de SOP; vervangt niets.
+    // Zonder GA4-config levert dit een lege string → de SOP draait volledig ongewijzigd door.
+    const ga4Context = await channelGa4Context(clientId, "google_ads", { supabase: supabase as unknown as Ga4SupabaseLike });
+    const ga4ContextText = ga4Context.promptContext ? `\n\n${ga4Context.promptContext}` : "";
     const preparedInputs: MonthlyPreparedInputs = {
       analysisYear,
       lastCompleteMonth,
@@ -2061,7 +2067,7 @@ ${runningContext}`,
     await runNarrativeStep(1, "Account Performance", `Analyseer de account performance voor client "${clientId}".
 De analyse draait op de laatste volledige maand (${["Jan","Feb","Mrt","Apr","Mei","Jun","Jul","Aug","Sep","Okt","Nov","Dec"][lastCompleteMonth - 1]} ${analysisYear}).${enrichment.strategicContext}${targetText}${dimAvailText}
 
-${reliabilityText}
+${reliabilityText}${ga4ContextText}
 
 ${comparisonFactsText}
 
