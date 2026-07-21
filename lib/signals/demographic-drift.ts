@@ -8,10 +8,15 @@
 import { mergeDetections, type DetectionResult, type SignalStory, type SignalEvidence } from "./types";
 
 export interface DemographicDriftRow {
-  dimension: string; // "functie" | "seniority" | "industrie" | "bedrijfsgrootte"
+  dimension: string; // "functie" | "seniority" | "leeftijd" | "plaatsing" | ...
   value: string;
   date: string;      // ISO
-  leads: number;
+  leads: number;     // de uitkomst-telling (leads voor LinkedIn, conversies voor Meta)
+}
+
+export interface DriftOptions {
+  outcomeLabel?: string; // "lead" (default) of "conversie"
+  idPrefix?: string;     // "demographic_drift" (default) of "meta_demographic_drift"
 }
 
 export const DRIFT_WINDOW_DAYS = 28;
@@ -25,7 +30,7 @@ const ev = (metric: string, value: string): SignalEvidence => ({ metric, value }
 
 interface Win { recent: number; prior: number }
 
-function analyzeDimension(dimension: string, segs: Map<string, Win>): SignalStory[] {
+function analyzeDimension(dimension: string, segs: Map<string, Win>, outcomeLabel: string, idPrefix: string): SignalStory[] {
   let recTotal = 0, priorTotal = 0;
   for (const w of segs.values()) { recTotal += w.recent; priorTotal += w.prior; }
   if (recTotal < DRIFT_MIN_WINDOW_LEADS || priorTotal < DRIFT_MIN_WINDOW_LEADS) return [];
@@ -45,10 +50,10 @@ function analyzeDimension(dimension: string, segs: Map<string, Win>): SignalStor
 
   if (decliner) {
     stories.push({
-      id: `demographic_drift_daling_${dimension}`,
+      id: `${idPrefix}_daling_${dimension}`,
       category: "conversie_meting",
       scope: `${dimension}: ${decliner.value}`,
-      story: `Binnen ${dimension} zakte het lead-aandeel van '${decliner.value}' van ${pctI(decliner.sharePrior)} → ${pctI(decliner.shareRecent)} (${ptS(decliner.shift)}) tussen de vorige en de recente ${DRIFT_WINDOW_DAYS} dagen: het segment dat eerder de leads droeg, droogt op.`,
+      story: `Binnen ${dimension} zakte het ${outcomeLabel}-aandeel van '${decliner.value}' van ${pctI(decliner.sharePrior)} → ${pctI(decliner.shareRecent)} (${ptS(decliner.shift)}) tussen de vorige en de recente ${DRIFT_WINDOW_DAYS} dagen: het segment dat eerder de ${outcomeLabel}s droeg, droogt op.`,
       actionDirection: `onderzoek of dit doelgroep-uitputting, creative-fatigue of een targeting-wijziging is; leun niet op een audience die wegzakt`,
       certainty: "indicatie",
       evidence: [ev("segment", decliner.value), ev("aandeel vorige", pctI(decliner.sharePrior)), ev("aandeel recent", pctI(decliner.shareRecent)), ev("verschuiving", ptS(decliner.shift))],
@@ -56,10 +61,10 @@ function analyzeDimension(dimension: string, segs: Map<string, Win>): SignalStor
   }
   if (riser) {
     stories.push({
-      id: `demographic_drift_stijging_${dimension}`,
+      id: `${idPrefix}_stijging_${dimension}`,
       category: "conversie_meting",
       scope: `${dimension}: ${riser.value}`,
-      story: `Binnen ${dimension} steeg het lead-aandeel van '${riser.value}' van ${pctI(riser.sharePrior)} → ${pctI(riser.shareRecent)} (${ptS(riser.shift)}): de converterende mix kantelt hiernaartoe.`,
+      story: `Binnen ${dimension} steeg het ${outcomeLabel}-aandeel van '${riser.value}' van ${pctI(riser.sharePrior)} → ${pctI(riser.shareRecent)} (${ptS(riser.shift)}): de converterende mix kantelt hiernaartoe.`,
       actionDirection: `check of dit bewust is (targeting/creative-wijziging) of organisch; is het je ICP, overweeg dan het budget mee te laten bewegen`,
       certainty: "indicatie",
       evidence: [ev("segment", riser.value), ev("aandeel vorige", pctI(riser.sharePrior)), ev("aandeel recent", pctI(riser.shareRecent)), ev("verschuiving", ptS(riser.shift))],
@@ -68,7 +73,9 @@ function analyzeDimension(dimension: string, segs: Map<string, Win>): SignalStor
   return stories;
 }
 
-export function buildDemographicDriftSignals(rows: DemographicDriftRow[], asOfDate: string): DetectionResult {
+export function buildDemographicDriftSignals(rows: DemographicDriftRow[], asOfDate: string, opts: DriftOptions = {}): DetectionResult {
+  const outcomeLabel = opts.outcomeLabel ?? "lead";
+  const idPrefix = opts.idPrefix ?? "demographic_drift";
   const asOf = Date.parse(asOfDate);
   const ageOf = (date: string): number => (asOf - Date.parse(date)) / 86_400_000;
 
@@ -87,8 +94,8 @@ export function buildDemographicDriftSignals(rows: DemographicDriftRow[], asOfDa
 
   const results: DetectionResult[] = [];
   for (const [dimension, segs] of byDim) {
-    results.push({ triggered: analyzeDimension(dimension, segs), checked: [`demographic_drift_${dimension}`] });
+    results.push({ triggered: analyzeDimension(dimension, segs, outcomeLabel, idPrefix), checked: [`${idPrefix}_${dimension}`] });
   }
-  if (results.length === 0) return { triggered: [], checked: ["demographic_drift"] };
+  if (results.length === 0) return { triggered: [], checked: [idPrefix] };
   return mergeDetections(results);
 }

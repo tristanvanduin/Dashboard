@@ -3,10 +3,11 @@
 import { useState, useEffect, useMemo } from "react";
 import { Loader2, Layers, TrendingUp, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { buildMetaBreakdownSignals, type MetaBreakdownRow } from "@/lib/signals/meta-breakdown";
+import { buildMetaBreakdownSignals, metaBreakdownTypeLabel, type MetaBreakdownRow } from "@/lib/signals/meta-breakdown";
 import { buildLinkedInDemographicSignals, type LinkedInDemographicRow } from "@/lib/signals/linkedin-demographic";
 import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/signals/budget-concentration";
 import { buildDemographicDriftSignals, type DemographicDriftRow } from "@/lib/signals/demographic-drift";
+import { buildSpendVelocitySignals, type SpendDailyRow } from "@/lib/signals/spend-velocity";
 import { mergeDetections, type SignalStory, type SignalCertainty } from "@/lib/signals/types";
 
 // Deterministische structuur-analyse per kanaal, client-side (leest de dag-tabellen direct en
@@ -61,11 +62,13 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
     };
 
     async function load() {
+      const asOfDate = new Date().toISOString().slice(0, 10);
       if (channel === "meta") {
-        const [{ data, error }, { data: campDaily }, { data: campNames }] = await Promise.all([
-          sb!.from("meta_breakdown_daily").select("breakdown_type, breakdown_value, impressions, link_clicks, spend, conversions").eq("client_id", clientId).gte("date", since),
+        const [{ data, error }, { data: campDaily }, { data: campNames }, { data: acctDaily }] = await Promise.all([
+          sb!.from("meta_breakdown_daily").select("breakdown_type, breakdown_value, date, impressions, link_clicks, spend, conversions").eq("client_id", clientId).gte("date", since),
           sb!.from("meta_campaign_daily").select("entity_id, spend, conversions").eq("client_id", clientId).gte("date", since),
           sb!.from("meta_campaigns").select("campaign_id, name").eq("client_id", clientId),
+          sb!.from("meta_account_daily").select("date, spend").eq("client_id", clientId).gte("date", since),
         ]);
         if (error) { if (!cancelled) { setError(error.message); setStories([]); } return; }
         const rows: MetaBreakdownRow[] = (data ?? []).map((r) => ({
@@ -73,19 +76,26 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
           breakdownValue: String(r.breakdown_value ?? ""),
           impressions: num(r.impressions), clicks: num(r.link_clicks), spend: num(r.spend), conversions: num(r.conversions),
         }));
+        const driftRows: DemographicDriftRow[] = (data ?? [])
+          .filter((r) => r.breakdown_type && r.breakdown_value && r.date)
+          .map((r) => ({ dimension: metaBreakdownTypeLabel(String(r.breakdown_type)), value: String(r.breakdown_value), date: String(r.date), leads: num(r.conversions) }));
         const names = new Map((campNames ?? []).map((c) => [String(c.campaign_id), String(c.name ?? c.campaign_id)]));
         const entities = toBudgetEntities((campDaily ?? []) as Record<string, unknown>[], "entity_id", "conversions", names);
+        const spendDaily: SpendDailyRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend) }));
         const merged = mergeDetections([
           buildMetaBreakdownSignals(rows),
           buildBudgetConcentrationSignals(entities, { channelLabel: "Meta", idPrefix: "meta_budget" }),
+          buildDemographicDriftSignals(driftRows, asOfDate, { outcomeLabel: "conversie", idPrefix: "meta_demographic_drift" }),
+          buildSpendVelocitySignals(spendDaily, { channelLabel: "Meta", idPrefix: "meta_budget" }),
         ]);
         if (!cancelled) setStories(merged.triggered);
       } else {
-        const [{ data: demo, error: demoErr }, { data: labels }, { data: campDaily }, { data: campNames }] = await Promise.all([
+        const [{ data: demo, error: demoErr }, { data: labels }, { data: campDaily }, { data: campNames }, { data: acctDaily }] = await Promise.all([
           sb!.from("linkedin_demographic_daily").select("pivot_type, pivot_value_urn, date, spend, leads").eq("client_id", clientId).gte("date", since),
           sb!.from("linkedin_urn_labels").select("urn, label"),
           sb!.from("linkedin_campaign_daily").select("entity_urn, spend, one_click_leads").eq("client_id", clientId).gte("date", since),
           sb!.from("linkedin_campaigns").select("campaign_urn, name").eq("client_id", clientId),
+          sb!.from("linkedin_account_daily").select("date, spend").eq("client_id", clientId).gte("date", since),
         ]);
         if (demoErr) { if (!cancelled) { setError(demoErr.message); setStories([]); } return; }
         const urnLabel = new Map((labels ?? []).map((l) => [String(l.urn), String(l.label)]));
@@ -107,10 +117,12 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
           .filter((r): r is DemographicDriftRow => r !== null);
         const names = new Map((campNames ?? []).map((c) => [String(c.campaign_urn), String(c.name ?? c.campaign_urn)]));
         const entities = toBudgetEntities((campDaily ?? []) as Record<string, unknown>[], "entity_urn", "one_click_leads", names);
+        const spendDaily: SpendDailyRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend) }));
         const merged = mergeDetections([
           buildLinkedInDemographicSignals(rows),
           buildBudgetConcentrationSignals(entities, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
-          buildDemographicDriftSignals(driftRows, new Date().toISOString().slice(0, 10)),
+          buildDemographicDriftSignals(driftRows, asOfDate),
+          buildSpendVelocitySignals(spendDaily, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
         ]);
         if (!cancelled) setStories(merged.triggered);
       }
@@ -119,13 +131,14 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
     return () => { cancelled = true; };
   }, [clientId, channel]);
 
-  const { waste, scale, risk, drift } = useMemo(() => {
+  const { waste, scale, risk, drift, pacing } = useMemo(() => {
     const list = stories ?? [];
     return {
       waste: list.filter((s) => s.id.includes("_waste_") || s.id.includes("_concentratie_onderpresteerder")),
       scale: list.filter((s) => s.id.includes("_scale_")),
       risk: list.filter((s) => s.id.includes("_concentratie_risico")),
       drift: list.filter((s) => s.id.includes("demographic_drift_")),
+      pacing: list.filter((s) => s.id.includes("_spend_versnelling") || s.id.includes("_spend_inzakking")),
     };
   }, [stories]);
 
@@ -171,6 +184,12 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
               <div>
                 <p className="text-[11px] font-semibold text-blue-600 uppercase tracking-wide mb-2 flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" /> Mix-verschuiving over de tijd</p>
                 <div className="space-y-2">{drift.map((s) => <StoryRow key={s.id} s={s} />)}</div>
+              </div>
+            )}
+            {pacing.length > 0 && (
+              <div>
+                <p className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide mb-2 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Uitgeeftempo</p>
+                <div className="space-y-2">{pacing.map((s) => <StoryRow key={s.id} s={s} />)}</div>
               </div>
             )}
           </div>
