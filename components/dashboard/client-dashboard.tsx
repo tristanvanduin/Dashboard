@@ -43,6 +43,7 @@ import { BrandingView } from "./branding-view";
 import { EventSettings } from "./event-settings";
 import { GeoCloneSettingsPanel } from "./geo-clone-settings";
 import { ChannelConversionSettings } from "./channel-conversion-settings";
+import { ChannelStructureAnalysis } from "./channel-structure-analysis";
 import { GeoCloneScope } from "./geo-clone-scope";
 import { GeoCloneOverview } from "./geo-clone-overview";
 import { TrackingAlert } from "./tracking-alert";
@@ -488,6 +489,8 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
         <>
           <SopTriggerButtons clientId={clientId} channel="meta_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
           <MetaCreativeAnalyses clientId={clientId} />
+          {/* Deterministische structuur-analyse (plaatsing/leeftijd/device), direct uit de data. */}
+          <ChannelStructureAnalysis clientId={clientId} channel="meta" />
           <CreativeDeepDive clientId={clientId} channel="meta" />
           <SignalAnalysisCard
             clientId={clientId}
@@ -515,6 +518,8 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
       {analysisChannel === "linkedin" && (
         <>
           <SopTriggerButtons clientId={clientId} channel="linkedin_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
+          {/* Deterministische structuur-analyse (functie/seniority/industrie/bedrijfsgrootte), direct uit de data. */}
+          <ChannelStructureAnalysis clientId={clientId} channel="linkedin" />
           <CreativeDeepDive clientId={clientId} channel="linkedin" />
           <SignalAnalysisCard
             clientId={clientId}
