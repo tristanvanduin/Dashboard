@@ -19,6 +19,9 @@ import { audienceContradiction, type ConvertingSegment, type TargetProfile, type
 import type { ChannelKey } from "@/lib/cross-channel/lens-facts";
 import type { SignalStory } from "@/lib/signals/types";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
+import { fetchGa4Dataset, type Ga4SupabaseLike } from "@/lib/ga4/data-access";
+import { buildGa4CroSignals, buildGa4DeviceCroSignals, buildGa4LandingPageCroSignals } from "@/lib/ga4/signals";
+import { mergeDetections } from "@/lib/signals/types";
 
 const SECTION = "cross_channel_v1";
 const SOP_TYPE = "cross_channel";
@@ -210,13 +213,35 @@ export async function POST(request: NextRequest) {
     degradations.push("KPI-verhoudingen: minder dan twee kanalen met twee volle maanden; de blended CPA-decompositie/verzadiging kan niet over de mix worden gelegd");
   }
 
+  // ── GA4 CRO-signaal: welk paid-kanaal stuurt verkeer dat op de site slechter converteert dan
+  // gemiddeld (landingpage-fit)? Verklarende website-laag; leeg zonder GA4-config → degradeert
+  // expliciet. De getriggerde verhalen landen net als de andere in de goedkeuringswachtrij. ──
+  const ga4Cro = await (async () => {
+    try {
+      const dataset = await fetchGa4Dataset(clientId, { supabase: supabase as unknown as Ga4SupabaseLike });
+      if (dataset.availability === "absent") {
+        degradations.push(`GA4 CRO: ${dataset.limitations[0] ?? "geen GA4-data"}; de kanaal-, device- en landingpage-conversie-kloof op de site zijn niet meetbaar`);
+        return { triggered: [] as SignalStory[], checked: ["ga4_cro_channel_gap", "ga4_cro_device_gap", "ga4_cro_landingpage_gap"] };
+      }
+      // Drie CRO-detectoren: kanaal-conversie-kloof, device-kloof (mobiel vs desktop) en
+      // landingpage-kloof (welke pagina lekt materieel meer dan de paid-site).
+      return mergeDetections([
+        buildGa4CroSignals(dataset.rows),
+        buildGa4DeviceCroSignals(dataset.rows),
+        buildGa4LandingPageCroSignals(dataset.rows),
+      ]);
+    } catch {
+      return { triggered: [] as SignalStory[], checked: ["ga4_cro_channel_gap", "ga4_cro_device_gap", "ga4_cro_landingpage_gap"] };
+    }
+  })();
+
   // ── Detectors + samenvoegen + renderen. ──
   const detected = buildCrossChannelSignals({ channels, brand });
   // Funnel over de kanalen heen: blended totaal-funnel, fase-achterblijver en divergentie.
   const funnel = buildCrossChannelFunnelSignals(channels);
   const merged = {
-    triggered: [...detected.triggered, ...funnel.triggered, ...kpiRelations.triggered, ...audienceStories],
-    checked: [...detected.checked, ...funnel.checked, ...kpiRelations.checked, "cross_audience_samenhang"],
+    triggered: [...detected.triggered, ...funnel.triggered, ...kpiRelations.triggered, ...audienceStories, ...ga4Cro.triggered],
+    checked: [...detected.checked, ...funnel.checked, ...kpiRelations.checked, "cross_audience_samenhang", ...ga4Cro.checked],
   };
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Cross-channel");
 

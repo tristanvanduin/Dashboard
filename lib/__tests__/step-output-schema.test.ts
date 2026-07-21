@@ -1,4 +1,4 @@
-import { StepOutputSchema, type StepOutput } from "../schema/analysis-schema";
+import { StepOutputSchema, normalizeEvidenceBasis, type StepOutput } from "../schema/analysis-schema";
 
 let passed = 0;
 let failed = 0;
@@ -134,6 +134,30 @@ console.log("5. Output zonder step_conclusion wordt gereject");
   delete invalid.step_conclusion;
   const result = StepOutputSchema.safeParse(invalid);
   assert(!result.success, "missing step_conclusion should fail");
+}
+
+console.log("6. evidence_basis: optioneel (backward-compatible) en gevalideerd");
+{
+  const withoutBasis = buildValidOutput();
+  assert(withoutBasis.evidence_basis === undefined, "buildValidOutput heeft geen evidence_basis");
+  assert(StepOutputSchema.safeParse(withoutBasis).success, "output zonder evidence_basis blijft geldig");
+
+  const withBasis = { ...buildValidOutput(), evidence_basis: "ga4" as const };
+  const parsed = StepOutputSchema.safeParse(withBasis);
+  assert(parsed.success, "output mét geldige evidence_basis is geldig");
+  assert(parsed.success && parsed.data.evidence_basis === "ga4", "evidence_basis wordt bewaard (niet gestript)");
+
+  const invalidBasis = { ...buildValidOutput(), evidence_basis: "verzonnen" };
+  assert(!StepOutputSchema.safeParse(invalidBasis).success, "onbekende evidence_basis-waarde wordt gereject");
+}
+
+console.log("7. normalizeEvidenceBasis: ontbrekend/ongeldig → platform, geldig → passthrough");
+{
+  assert(normalizeEvidenceBasis(undefined) === "platform", "ontbrekend → platform");
+  assert(normalizeEvidenceBasis("onzin") === "platform", "ongeldig → platform");
+  assert(normalizeEvidenceBasis("ga4") === "ga4", "geldig ga4 → ga4");
+  assert(normalizeEvidenceBasis("combined") === "combined", "geldig combined → combined");
+  assert(normalizeEvidenceBasis("estimated") === "estimated", "geldig estimated → estimated");
 }
 
 console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);

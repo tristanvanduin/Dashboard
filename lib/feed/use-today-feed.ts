@@ -11,6 +11,8 @@ import {
   reconcileFeed, sortBand, measuredRiskOpen, isNewSince, isOverdue,
   type FeedItem, type FeedSeverity, type FeedStateRow,
 } from "./feed-item";
+import { ga4SignalToFeedItem } from "./adapters-ga4";
+import type { SignalStory } from "@/lib/signals/types";
 import { demoFeedItems, DEMO_AUTO_RESOLVED } from "./owners-mock";
 
 // De IO-laag van de Vandaag-feed. Haalt de bestaande bronnen CROSS-CLIENT op (zichtbare
@@ -129,6 +131,18 @@ export function useTodayFeed(): TodayFeed {
             }
           } catch { /* overview optioneel; feed werkt zonder */ }
         }
+        if (cancelled) return;
+
+        // GA4-signalen (real-data pad): server-side gedraaid over de GA4-laag, hier gemapt via de
+        // gedeelde pure adapter. Zonder GA4-config levert dit niets — de feed werkt gewoon door.
+        try {
+          const res = await fetch(`/api/ga4/signals?clientIds=${encodeURIComponent(ids.join(","))}`);
+          const data = await res.json();
+          for (const c of (data.clients ?? []) as Array<{ clientId: string; signals: SignalStory[] }>) {
+            if (!ids.includes(c.clientId)) continue;
+            for (const s of c.signals ?? []) items.push(ga4SignalToFeedItem(s, c.clientId, nm(c.clientId)));
+          }
+        } catch { /* GA4 optioneel; feed werkt zonder */ }
         if (cancelled) return;
       }
 

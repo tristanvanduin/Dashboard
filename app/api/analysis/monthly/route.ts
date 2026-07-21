@@ -36,12 +36,15 @@ import {
   extractJson,
   FindingSchema,
   StepOutputSchema,
+  normalizeEvidenceBasis,
   type StepOutput,
   type Finding,
 } from "@/lib/schema/analysis-schema";
 import { sanitizeOutput } from "@/lib/analysis/sanitize";
 import { computeComparisonFacts, formatComparisonFacts, computeCampaignMomFacts, computeAdGroupMomFacts } from "@/lib/analysis/comparison-facts";
 import { computeDataReliability, type DataReliabilityAssessment } from "@/lib/analysis/data-reliability";
+import { channelGa4Context } from "@/lib/ga4/context";
+import type { Ga4SupabaseLike } from "@/lib/ga4/data-access";
 import { checkStepDataAvailability } from "@/lib/analysis/data-availability";
 import type { StepDataAvailability } from "@/lib/analysis/data-availability";
 import { checkDataFreshness } from "@/lib/sync/freshness";
@@ -179,6 +182,7 @@ function buildFallbackStepOutput(rawOutput: string, stepNumber: number): ParsedS
     status: "NIET OP SCHEMA",
     actions: [],
     step_conclusion: "Parse error - handmatige review nodig.",
+    evidence_basis: "platform",
     rawOutput,
   };
 }
@@ -574,6 +578,7 @@ function coerceSafeStepPayload(candidate: unknown, stepNumber: number): StepOutp
     status: "NIET OP SCHEMA",
     actions,
     step_conclusion: stepConclusion,
+    evidence_basis: normalizeEvidenceBasis(candidate.evidence_basis),
   };
 }
 
@@ -621,6 +626,9 @@ function parseStructuredStepOutput(
 
   try {
     const normalized: StepOutput = salvaged.output;
+    // Bewijs-basis van deze stapconclusie, deterministisch genormaliseerd: gaf de stap niets
+    // (of iets ongeldigs) mee, dan wordt het "platform" — nooit een ongefundeerde GA4-claim.
+    const evidenceBasis = normalizeEvidenceBasis(normalized.evidence_basis);
     const parsedStep: ParsedStepOutput = {
       stepNumber: step.stepNumber,
       stepName: step.stepName,
@@ -635,6 +643,7 @@ function parseStructuredStepOutput(
         actie: sanitizeStepActionText(step.stepNumber, action.actie),
       })),
       step_conclusion: normalized.step_conclusion,
+      evidence_basis: evidenceBasis,
       rawOutput: step.output,
     };
     const reconciledStep = step.stepNumber === 12
@@ -647,6 +656,7 @@ function parseStructuredStepOutput(
       status: reconciledStep.status,
       actions: reconciledStep.actions,
       step_conclusion: reconciledStep.step_conclusion,
+      evidence_basis: reconciledStep.evidence_basis,
     };
     const scopedValidation = validateStepOutput(step.stepNumber, validationPayload, priorStepConclusion, { availability: stepAvailability, liveTerms, purityRules: channelValidation?.purityRules, logFormatSkeletons: channelValidation?.logFormatSkeletons });
     const claimWarnings = canonicalMap
@@ -721,6 +731,10 @@ function mergeParsedStepOutputs(parts: ParsedStepOutput[], stepNumber: number, s
   const stepConclusion = parts[parts.length - 1]?.step_conclusion
     || parts[0]?.step_conclusion
     || "Samengevoegde stapconclusie ontbreekt.";
+  // De basis volgt de laatste (definitieve) deelconclusie; deterministisch genormaliseerd.
+  const stepEvidenceBasis = normalizeEvidenceBasis(
+    parts[parts.length - 1]?.evidence_basis ?? parts[0]?.evidence_basis
+  );
 
   return {
     stepNumber,
@@ -736,6 +750,7 @@ function mergeParsedStepOutputs(parts: ParsedStepOutput[], stepNumber: number, s
     status: mergedStatus,
     actions: mergedActions,
     step_conclusion: stepConclusion,
+    evidence_basis: stepEvidenceBasis,
     rawOutput: JSON.stringify({
       narrative: parts.map((part) => part.narrative),
       log_entries: parts.flatMap((part) => part.log_entries),
@@ -889,6 +904,10 @@ async function runMetaMonthlyAnalysis(
 
   const { canonicalMetricMap, stepFacts } = await buildMetaAnalysisData(supabase, clientId, periodEnd);
 
+  // GA4 als verklarende context (Meta), zelfde laag als Google. Leeg zonder GA4-config → SOP
+  // draait ongewijzigd door. Landt in stap 1 (account performance).
+  const ga4ContextText = (await channelGa4Context(clientId, adapter.channel, { supabase: supabase as unknown as Ga4SupabaseLike })).promptContext;
+
   // E1-wiring (Meta): het client-geheugen eenmalig ophalen, zelfde patroon als Google.
   const clientMemorySection = buildClientMemoryGrounding(await getClientMemory(supabase, clientId));
 
@@ -913,7 +932,8 @@ async function runMetaMonthlyAnalysis(
       adapter,
       clientMemorySection
     );
-    const userMessage = buildMetaStepMessage(stepNumber, stepFacts[stepNumber], clientId);
+    const userMessage = buildMetaStepMessage(stepNumber, stepFacts[stepNumber], clientId)
+      + (stepNumber === 1 && ga4ContextText ? `\n\n${ga4ContextText}` : "");
     const step = await runStep({ ...shared, stepNumber, stepName, systemPrompt, userMessage });
     allSteps.push(step);
     const priorStepConclusion = conclusions.at(-1);
@@ -1017,6 +1037,9 @@ async function runLinkedinMonthlyAnalysis(
 
   const { canonicalMetricMap, stepFacts } = await buildLinkedinAnalysisData(supabase, clientId, periodEnd, { icp });
 
+  // GA4 als verklarende context (LinkedIn), zelfde laag als Google/Meta. Leeg zonder GA4-config.
+  const ga4ContextText = (await channelGa4Context(clientId, adapter.channel, { supabase: supabase as unknown as Ga4SupabaseLike })).promptContext;
+
   // E1-wiring (LinkedIn): het client-geheugen eenmalig ophalen, zelfde patroon als Google.
   const clientMemorySection = buildClientMemoryGrounding(await getClientMemory(supabase, clientId));
 
@@ -1041,7 +1064,8 @@ async function runLinkedinMonthlyAnalysis(
       adapter,
       clientMemorySection
     );
-    const userMessage = buildLinkedinStepMessage(stepNumber, stepFacts[stepNumber], clientId);
+    const userMessage = buildLinkedinStepMessage(stepNumber, stepFacts[stepNumber], clientId)
+      + (stepNumber === 1 && ga4ContextText ? `\n\n${ga4ContextText}` : "");
     const step = await runStep({ ...shared, stepNumber, stepName, systemPrompt, userMessage });
     allSteps.push(step);
     const priorStepConclusion = conclusions.at(-1);
@@ -1579,6 +1603,10 @@ ${runningContext}`,
         })
       : ({ promptContext: "## Data reliability\nPrepared monthly context geladen; account- en campagnebetrouwbaarheid is vooraf berekend." } as DataReliabilityAssessment);
     const reliabilityText = reliability.promptContext;
+    // GA4 als verklarende context (website/funnel/tracking/CRO). Verrijkt de SOP; vervangt niets.
+    // Zonder GA4-config levert dit een lege string → de SOP draait volledig ongewijzigd door.
+    const ga4Context = await channelGa4Context(clientId, "google_ads", { supabase: supabase as unknown as Ga4SupabaseLike });
+    const ga4ContextText = ga4Context.promptContext ? `\n\n${ga4Context.promptContext}` : "";
     const preparedInputs: MonthlyPreparedInputs = {
       analysisYear,
       lastCompleteMonth,
@@ -2061,7 +2089,7 @@ ${runningContext}`,
     await runNarrativeStep(1, "Account Performance", `Analyseer de account performance voor client "${clientId}".
 De analyse draait op de laatste volledige maand (${["Jan","Feb","Mrt","Apr","Mei","Jun","Jul","Aug","Sep","Okt","Nov","Dec"][lastCompleteMonth - 1]} ${analysisYear}).${enrichment.strategicContext}${targetText}${dimAvailText}
 
-${reliabilityText}
+${reliabilityText}${ga4ContextText}
 
 ${comparisonFactsText}
 
