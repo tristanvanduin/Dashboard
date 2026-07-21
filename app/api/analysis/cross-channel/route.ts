@@ -17,14 +17,21 @@ import type { KpiWindow } from "@/lib/analysis/kpi-relations";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { audienceContradiction, type ConvertingSegment, type TargetProfile, type AudienceDimension } from "@/lib/cross-channel/audience-coherence";
 import type { ChannelKey } from "@/lib/cross-channel/lens-facts";
-import type { SignalStory } from "@/lib/signals/types";
+import type { SignalStory, DetectionResult } from "@/lib/signals/types";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
 import { fetchGa4Dataset, type Ga4SupabaseLike } from "@/lib/ga4/data-access";
 import { buildGa4CroSignals, buildGa4DeviceCroSignals, buildGa4LandingPageCroSignals } from "@/lib/ga4/signals";
 import { mergeDetections } from "@/lib/signals/types";
 
 const SECTION = "cross_channel_v1";
+// Additieve sectie: de sub-analyses als losse blokken (JSON), zodat de UI de cross-channel-
+// analyse net als de kanalen in kleinere, benoemde kaarten kan tonen. De bestaande markdown-
+// sectie (SECTION) blijft ongemoeid voor PDF/rapportage.
+const GROUPS_SECTION = "cross_channel_groups_v1";
 const SOP_TYPE = "cross_channel";
+
+// Vorm van een opgeslagen/teruggegeven sub-analyse-groep.
+interface CrossGroup { key: string; title: string; description: string; section: string; triggered: number; checked: string[] }
 const MONTHS_BACK = 6;
 const DEMO_DAYS = 90;
 const BRAND_NAME_RE = /brand|merk/i;
@@ -43,17 +50,34 @@ export async function GET(request: NextRequest) {
   const supabase = getSupabase();
   if (!supabase) return Response.json({ error: "Supabase is niet geconfigureerd" }, { status: 500 });
 
-  const { data } = await supabase
-    .from("sop_analysis_output")
-    .select("output, model_used, analysis_date")
-    .eq("client_id", clientId)
-    .eq("sop_type", SOP_TYPE)
-    .eq("section", SECTION)
-    .order("analysis_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const [{ data }, { data: groupsRow }] = await Promise.all([
+    supabase
+      .from("sop_analysis_output")
+      .select("output, model_used, analysis_date")
+      .eq("client_id", clientId)
+      .eq("sop_type", SOP_TYPE)
+      .eq("section", SECTION)
+      .order("analysis_date", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("sop_analysis_output")
+      .select("output, analysis_date")
+      .eq("client_id", clientId)
+      .eq("sop_type", SOP_TYPE)
+      .eq("section", GROUPS_SECTION)
+      .order("analysis_date", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
-  return Response.json({ analysis: data ?? null });
+  // De sub-analyse-groepen (indien eerder gedraaid) meegeven zodat de UI ze als losse kaarten toont.
+  let groups: CrossGroup[] | null = null;
+  if (groupsRow?.output) {
+    try { groups = (JSON.parse(groupsRow.output as string) as { groups?: CrossGroup[] }).groups ?? null; } catch { groups = null; }
+  }
+
+  return Response.json({ analysis: data ?? null, groups, groupsDate: groupsRow?.analysis_date ?? null });
 }
 
 export async function POST(request: NextRequest) {
@@ -245,6 +269,21 @@ export async function POST(request: NextRequest) {
   };
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Cross-channel");
 
+  // Sub-analyses als losse blokken uit DEZELFDE ene run (geen aparte endpoints, geen dubbele
+  // berekening), zodat de cross-channel-analyse net als de kanalen kleinere, benoemde onderdelen
+  // toont. Elke groep rendert zijn eigen sectie; wachtrij + gecombineerde markdown blijven gelijk.
+  const groupDefs: { key: string; title: string; description: string; det: DetectionResult }[] = [
+    { key: "funnel", title: "Cross-funnel", description: "Blended totaal-funnel, fase-achterblijver en divergentie over de kanalen.", det: funnel },
+    { key: "signals", title: "Zaai-oogst, arbitrage & mix-shift", description: "Merkvraag uit non-brand, CPL-arbitrage tussen kanalen en verschuivingen in de mix.", det: detected },
+    { key: "kpi", title: "KPI-verhoudingen (blended)", description: "CPA-decompositie, verzadiging en bereik-verdunning over de kanaalmix.", det: kpiRelations },
+    { key: "audience", title: "Doelgroep-samenhang", description: "Converterende LinkedIn-segmenten vs het gedeclareerde doelprofiel.", det: { triggered: audienceStories, checked: ["cross_audience_samenhang"] } },
+    { key: "ga4_cro", title: "GA4 CRO (website)", description: "Kanaal-, device- en landingpage-conversiekloof op de site.", det: ga4Cro },
+  ];
+  const groups: CrossGroup[] = groupDefs.map((g) => {
+    const r = renderSignalSection(g.det, g.title);
+    return { key: g.key, title: g.title, description: g.description, section: r.section, triggered: r.triggeredCount, checked: g.det.checked };
+  });
+
   const lines: string[] = [];
   lines.push(section || `## Cross-channel-signalen\n\nGeen signalen getriggerd. Gecontroleerd: ${checkedIds.join(", ")}.`);
   if (degradations.length > 0) {
@@ -273,10 +312,29 @@ export async function POST(request: NextRequest) {
   });
   if (saveError) return Response.json({ error: "Opslaan mislukt", detail: saveError }, { status: 500 });
 
+  // De sub-analyse-groepen additief opslaan (JSON), naast de gecombineerde markdown-sectie.
+  await saveAnalysisOutputSection({
+    supabase,
+    row: {
+      client_id: clientId,
+      sop_type: SOP_TYPE,
+      analysis_date: analysisDate,
+      period_start: months[0].slice(0, 10),
+      period_end: months[months.length - 1].slice(0, 10),
+      section: GROUPS_SECTION,
+      output: JSON.stringify({ groups, degradations }),
+      model_used: "deterministisch",
+      tokens_used: 0,
+      step_number: 1,
+      step_name: "Cross-channel sub-analyses",
+    },
+  });
+
   await saveSignalHypotheses(supabase, merged.triggered, "cross_channel", { clientId, analysisId: null });
 
   return Response.json({
     analysis: output,
+    groups,
     signals: triggeredCount,
     checked: checkedIds.length,
     degradations,
