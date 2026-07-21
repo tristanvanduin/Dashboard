@@ -9,8 +9,10 @@
 import { NextRequest } from "next/server";
 import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { buildMetaCreativeSignals } from "@/lib/signals/meta-creative";
-import { buildMetaBreakdownSignals, type MetaBreakdownRow } from "@/lib/signals/meta-breakdown";
+import { buildMetaBreakdownSignals, metaBreakdownTypeLabel, type MetaBreakdownRow } from "@/lib/signals/meta-breakdown";
 import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/signals/budget-concentration";
+import { buildDemographicDriftSignals, type DemographicDriftRow } from "@/lib/signals/demographic-drift";
+import { buildSpendVelocitySignals, type SpendDailyRow } from "@/lib/signals/spend-velocity";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { mergeDetections } from "@/lib/signals/types";
 import { shapeMetaAdInputs, shapeMetaLevelInputs, type MetaDailyRow } from "@/lib/analysis/channel-signal-data";
@@ -53,7 +55,7 @@ export async function POST(request: NextRequest) {
   }
 
   const since = new Date(Date.now() - FETCH_DAYS * 86_400_000).toISOString().slice(0, 10);
-  const [adRes, campRes, adNamesRes, campNamesRes, breakdownRes] = await Promise.all([
+  const [adRes, campRes, adNamesRes, campNamesRes, breakdownRes, accountRes] = await Promise.all([
     supabase
       .from("meta_ad_daily")
       .select("entity_id, date, impressions, link_clicks, spend, conversions, conversion_value, frequency, hook_rate, hold_rate, quality_ranking, engagement_rate_ranking, conversion_rate_ranking")
@@ -68,7 +70,12 @@ export async function POST(request: NextRequest) {
     supabase.from("meta_campaigns").select("campaign_id, name").eq("client_id", clientId),
     supabase
       .from("meta_breakdown_daily")
-      .select("breakdown_type, breakdown_value, impressions, link_clicks, spend, conversions")
+      .select("breakdown_type, breakdown_value, date, impressions, link_clicks, spend, conversions")
+      .eq("client_id", clientId)
+      .gte("date", since),
+    supabase
+      .from("meta_account_daily")
+      .select("date, spend")
       .eq("client_id", clientId)
       .gte("date", since),
   ]);
@@ -107,10 +114,21 @@ export async function POST(request: NextRequest) {
   }
   const budgetEntities: BudgetEntityRow[] = [...campTotals.entries()].map(([eid, t]) => ({ name: campName.get(eid) ?? eid, spend: t.spend, conversions: t.conversions }));
 
+  // Meta demografie-/segment-drift over de tijd + spend-velocity op accountniveau.
+  const asOfDate = new Date().toISOString().slice(0, 10);
+  const metaDriftRows: DemographicDriftRow[] = breakdownRows.length > 0
+    ? (breakdownRes.data ?? [])
+        .filter((r) => r.breakdown_type && r.breakdown_value && r.date)
+        .map((r) => ({ dimension: metaBreakdownTypeLabel(String(r.breakdown_type)), value: String(r.breakdown_value), date: String(r.date), leads: num(r.conversions) }))
+    : [];
+  const metaSpendDaily: SpendDailyRow[] = (accountRes.data ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend) }));
+
   const merged = mergeDetections([
     buildMetaCreativeSignals({ ads, levels }),
     buildMetaBreakdownSignals(breakdownRows),
     buildBudgetConcentrationSignals(budgetEntities, { channelLabel: "Meta", idPrefix: "meta_budget" }),
+    buildDemographicDriftSignals(metaDriftRows, asOfDate, { outcomeLabel: "conversie", idPrefix: "meta_demographic_drift" }),
+    buildSpendVelocitySignals(metaSpendDaily, { channelLabel: "Meta", idPrefix: "meta_budget" }),
   ]);
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Meta");
 

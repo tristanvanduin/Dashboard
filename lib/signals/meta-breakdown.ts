@@ -32,7 +32,8 @@ const TYPE_LABEL: Record<string, string> = {
   device_platform: "device",
   impression_device: "device",
 };
-const typeLabel = (t: string): string => TYPE_LABEL[t] ?? t.replace(/_/g, " ");
+export const metaBreakdownTypeLabel = (t: string): string => TYPE_LABEL[t] ?? t.replace(/_/g, " ");
+const typeLabel = metaBreakdownTypeLabel;
 
 const eurS = (v: number | null): string => (v == null || !Number.isFinite(v) ? "n.v.t." : `€${Math.round(v * 100) / 100}`);
 const pctI = (v: number): string => `${Math.round(v * 100)}%`;

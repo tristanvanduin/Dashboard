@@ -33,6 +33,10 @@ function dayFactor(d: number, seed: number): number {
 
 const N_MONTHS = 25; // twee jaar historie zodat de vorige beurs-editie een volledige curve heeft
 
+// Recente uitgeef-versnelling (laatste dagen), zodat de spend-velocity-detector in de demo een
+// tempo-afwijking vindt. `daysAgo` = 0 is vandaag.
+const recentSpendBump = (daysAgo: number): number => (daysAgo < 6 ? 1.7 : 1);
+
 // ── ads_campaign_monthly: per campagne × 13 maanden (voedt o.a. het beurs/geo-clone-overzicht) ──
 const CAMPAIGNS = [
   { id: "demo-c-grt", name: "GRT | Search | NL", imp: 42000, clk: 2100, cost: 4200, conv: 60, aov: 130, seed: 0 },
@@ -153,7 +157,7 @@ const metaDayAgg = (day: number) => META_ADS.reduce((s, a) => {
 }, { impressions: 0, link_clicks: 0, spend: 0, conversions: 0 });
 const metaAccountDaily: Row[] = Array.from({ length: 150 }, (_, d) => {
   const day = 149 - d; const a = metaDayAgg(day);
-  return { client_id: CID, date: dayISO(day), impressions: a.impressions, link_clicks: a.link_clicks, spend: a.spend, conversions: a.conversions, leads: a.conversions };
+  return { client_id: CID, date: dayISO(day), impressions: a.impressions, link_clicks: a.link_clicks, spend: Math.round(a.spend * recentSpendBump(day)), conversions: a.conversions, leads: a.conversions };
 });
 // meta_campaigns + meta_campaign_daily voeden de ChannelPerformance-view (KPI's, maand-/campagnetabel).
 const META_CAMPAIGNS = [
@@ -170,24 +174,30 @@ const metaCampaignDaily: Row[] = META_CAMPAIGNS.flatMap((c) =>
 // meta_breakdown_daily: plaatsing/leeftijd/device-segmenten met een dure verspiller
 // (audience_network / desktop) en een efficiënte schaalkans (facebook), zodat de
 // breakdown-efficiëntie-detector in de demo iets zinnigs vindt.
+// drift: verschuiving van het conversie-aandeel over de tijd, zodat naast de segment-
+// efficiëntie ook de Meta demografie-drift-detector iets vindt.
 const META_BD_SEGMENTS = [
-  { type: "publisher_platform", value: "instagram", spend: 20, conv: 0.8 },
-  { type: "publisher_platform", value: "audience_network", spend: 14, conv: 0.12 },
-  { type: "publisher_platform", value: "facebook", spend: 4, conv: 0.28 },
-  { type: "age", value: "25-34", spend: 16, conv: 0.7 },
-  { type: "age", value: "35-44", spend: 12, conv: 0.35 },
-  { type: "age", value: "45-54", spend: 8, conv: 0.1 },
-  { type: "device_platform", value: "mobile", spend: 26, conv: 0.9 },
-  { type: "device_platform", value: "desktop", spend: 8, conv: 0.05 },
+  { type: "publisher_platform", value: "instagram", spend: 20, conv: 0.8, drift: 0.6 },
+  { type: "publisher_platform", value: "audience_network", spend: 14, conv: 0.12, drift: -0.6 },
+  { type: "publisher_platform", value: "facebook", spend: 4, conv: 0.28, drift: 0 },
+  { type: "age", value: "25-34", spend: 16, conv: 0.7, drift: -0.5 },
+  { type: "age", value: "35-44", spend: 12, conv: 0.35, drift: 0 },
+  { type: "age", value: "45-54", spend: 8, conv: 0.1, drift: 0.8 },
+  { type: "device_platform", value: "mobile", spend: 26, conv: 0.9, drift: 0 },
+  { type: "device_platform", value: "desktop", spend: 8, conv: 0.05, drift: 0 },
 ];
+const META_BD_DAYS = 60;
 const metaBreakdownDaily: Row[] = META_BD_SEGMENTS.flatMap((s) =>
-  Array.from({ length: 40 }, (_, d) => {
-    const f = dayFactor(39 - d, s.value.length);
+  Array.from({ length: META_BD_DAYS }, (_, d) => {
+    const age = META_BD_DAYS - 1 - d;
+    const f = dayFactor(age, s.value.length);
+    const recency = 1 - age / (META_BD_DAYS - 1);
+    const driftMul = 1 + (s.drift ?? 0) * (recency - 0.5) * 2;
     return {
-      client_id: CID, date: dayISO(39 - d), level: "account", entity_id: "act",
+      client_id: CID, date: dayISO(age), level: "account", entity_id: "act",
       breakdown_type: s.type, breakdown_value: s.value,
       impressions: Math.round(2000 * f), link_clicks: Math.round(40 * f), clicks_all: Math.round(45 * f),
-      spend: Math.round(s.spend * f), conversions: s.conv * f, conversion_value: Math.round(s.conv * f * 120),
+      spend: Math.round(s.spend * f), conversions: s.conv * f * driftMul, conversion_value: Math.round(s.conv * f * driftMul * 120),
     };
   })
 );
@@ -212,7 +222,7 @@ const linkedinCreativeDaily: Row[] = LI_META.flatMap((c) =>
 const linkedinAccountDaily: Row[] = Array.from({ length: 150 }, (_, d) => {
   const day = 149 - d;
   const agg = LI_META.reduce((s, c) => { const f = dayFactor(day, c.seed); s.impressions += Math.round(c.imp * f); s.clicks += Math.round(c.clk * f); s.spend += Math.round(c.spend * f); s.leads += Math.max(0, Math.round(c.leads * f)); return s; }, { impressions: 0, clicks: 0, spend: 0, leads: 0 });
-  return { client_id: CID, date: dayISO(day), impressions: agg.impressions, clicks: agg.clicks, spend: agg.spend, external_website_conversions: Math.round(agg.leads * 0.3), one_click_leads: agg.leads };
+  return { client_id: CID, date: dayISO(day), impressions: agg.impressions, clicks: agg.clicks, spend: Math.round(agg.spend * recentSpendBump(day)), external_website_conversions: Math.round(agg.leads * 0.3), one_click_leads: agg.leads };
 });
 // linkedin_campaign_daily voedt de ChannelPerformance-view (per campagne).
 // Expliciet i.p.v. formule: 'Brede awareness' domineert de spend maar levert weinig leads,
