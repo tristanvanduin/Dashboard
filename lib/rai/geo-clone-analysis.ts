@@ -16,6 +16,7 @@ import { aggregateCampaignMonthlyByGeoClone, type CampaignMonthlyRow } from "./g
 import { previousEditionFor, type RaiEdition, type FairCadence } from "./event-comparison";
 import { alignEditionsAtEqualDaysOut, isWithinWindow, type DailyPoint, type Edition as AxisEdition, type EditionComparison } from "./event-time-axis";
 import { forecastStream, type StreamForecast } from "./event-forecast";
+import { forecastAllChannels, type ChannelForecastInput, type ChannelForecastResult, type BlendedForecast } from "./multi-channel-forecast";
 import type { Edition as SettingsEdition } from "./geo-clone-settings";
 
 export const FAIR_DURATION_DAYS = 3; // aanname: een beurs duurt enkele dagen; alleen de startdag is geconfigureerd
@@ -29,6 +30,11 @@ export interface GeoCloneAnalysisInput {
   editions: SettingsEdition[]; // uit de per-beurs-instellingen (met account-fallback)
   conversionsTarget: number | null; // doel voor deze beurs (resolved, account-fallback)
   asOfDate: string; // ISO
+  // Optionele extra kanalen (Meta/LinkedIn) als dag-conversiepunten, al gefilterd op deze beurs.
+  // Google komt uit `rows`; deze kanalen krijgen dezelfde event-relatieve forecast en tellen mee
+  // in het blended beursbeeld ("hoeveel verwachten we in totaal op de beurs"). Elk kanaal even
+  // belangrijk: dezelfde kern, dezelfde tijdas (dagen-tot-beurs).
+  channelConvPoints?: { channel: string; points: DailyPoint[]; target?: number | null }[];
 }
 
 export interface GeoCloneAnalysisResult {
@@ -40,6 +46,8 @@ export interface GeoCloneAnalysisResult {
   conversions: EditionComparison | null;
   cost: EditionComparison | null;
   forecast: StreamForecast | null;
+  perChannelForecast: ChannelForecastResult[]; // event-relatieve forecast per kanaal (incl. Google)
+  blendedForecast: BlendedForecast | null; // totaal over de kanalen; null bij één kanaal
   degradations: string[];
   /** true als de projectie het doel mist of de aanloop materieel achterligt: wachtrij-waardig */
   actionNeeded: boolean;
@@ -134,12 +142,29 @@ export function analyzeGeoClone(input: GeoCloneAnalysisInput): GeoCloneAnalysisR
     input.asOfDate
   );
 
-  const forecast = forecastStream({
-    current: { edition: current, points: curConv },
-    previous: prev.edition ? { edition: prev.edition, points: prevConv } : null,
-    target: input.conversionsTarget,
-    asOfDate: input.asOfDate,
-  });
+  // Universele, event-relatieve forecast over alle kanalen. Google uit de campagne-maanddata,
+  // Meta/LinkedIn uit hun (al beurs-gefilterde) dag-conversiepunten. Dezelfde kern, dezelfde
+  // tijdas; het blended totaal is "hoeveel verwachten we in totaal op de beurs".
+  const channelInputs: ChannelForecastInput[] = [
+    {
+      channel: "google_ads",
+      current: { edition: current, points: curConv },
+      previous: prev.edition ? { edition: prev.edition, points: prevConv } : null,
+      target: input.conversionsTarget,
+    },
+  ];
+  for (const cs of input.channelConvPoints ?? []) {
+    channelInputs.push({
+      channel: cs.channel,
+      current: { edition: current, points: pointsWithin(cs.points, current) },
+      previous: prev.edition ? { edition: prev.edition, points: pointsWithin(cs.points, prev.edition) } : null,
+      target: cs.target ?? null,
+    });
+  }
+  const multi = forecastAllChannels(channelInputs, input.asOfDate);
+  // Behoud het bestaande Google-gedrag exact: forecast blijft de Google-stream.
+  const forecast = multi.perChannel.find((c) => c.channel === "google_ads")!.forecast;
+  const blendedForecast = channelInputs.length > 1 ? multi.blended : null;
 
   if (input.conversionsTarget == null) {
     degradations.push("geen conversie-doel voor deze beurs (beurs- noch account-niveau); de projectie heeft geen doel om tegen af te zetten");
@@ -149,7 +174,7 @@ export function analyzeGeoClone(input: GeoCloneAnalysisInput): GeoCloneAnalysisR
   const missesTarget = forecast.willHitTarget === false;
   const actionNeeded = Boolean(behindMaterially || missesTarget);
 
-  const markdown = renderMarkdown(input, current, prev.edition?.editionId ?? null, prev.gapDays, prev.cadenceMatches, conversions, cost, forecast, degradations);
+  const markdown = renderMarkdown(input, current, prev.edition?.editionId ?? null, prev.gapDays, prev.cadenceMatches, conversions, cost, forecast, multi.perChannel, blendedForecast, degradations);
 
   return {
     geoClone: input.geoClone,
@@ -160,6 +185,8 @@ export function analyzeGeoClone(input: GeoCloneAnalysisInput): GeoCloneAnalysisR
     conversions,
     cost,
     forecast,
+    perChannelForecast: multi.perChannel,
+    blendedForecast,
     degradations,
     actionNeeded,
     markdown,
@@ -176,6 +203,8 @@ function emptyResult(input: GeoCloneAnalysisInput, degradations: string[]): GeoC
     conversions: null,
     cost: null,
     forecast: null,
+    perChannelForecast: [],
+    blendedForecast: null,
     degradations,
     actionNeeded: false,
     markdown: [`# Beursanalyse ${input.fairLabel} (${input.geoClone})`, "", "## Niet uitvoerbaar", ...degradations.map((d) => `- ${d}`)].join("\n"),
@@ -184,6 +213,9 @@ function emptyResult(input: GeoCloneAnalysisInput, degradations: string[]): GeoC
 
 const fmtPct = (v: number | null): string => (v == null ? "n.v.t." : `${v >= 0 ? "+" : ""}${Math.round(v * 1000) / 10}%`);
 const fmtNum = (v: number | null): string => (v == null ? "n.v.t." : String(Math.round(v)));
+
+const CHANNEL_LABEL: Record<string, string> = { google_ads: "Google", meta_ads: "Meta", linkedin_ads: "LinkedIn" };
+const channelLabel = (c: string): string => CHANNEL_LABEL[c] ?? c;
 
 function renderMarkdown(
   input: GeoCloneAnalysisInput,
@@ -194,6 +226,8 @@ function renderMarkdown(
   conversions: EditionComparison,
   cost: EditionComparison,
   forecast: StreamForecast,
+  perChannel: ChannelForecastResult[],
+  blended: BlendedForecast | null,
   degradations: string[]
 ): string {
   const lines: string[] = [
@@ -228,6 +262,20 @@ function renderMarkdown(
   if (forecast.target != null) {
     lines.push(
       `- Doel: **${fmtNum(forecast.target)}**${forecast.projectedVsTargetPct != null ? ` — projectie komt uit op **${Math.round(forecast.projectedVsTargetPct * 100)}%** van het doel (${forecast.willHitTarget ? "haalt het doel" : "MIST het doel"})` : ""}.`
+    );
+  }
+
+  // Universeel beursbeeld: per kanaal + het totaal, allemaal event-relatief (dagen-tot-beurs).
+  if (blended && perChannel.length > 1) {
+    lines.push("", "## Beursprojectie over alle kanalen (dagen-tot-beurs)");
+    for (const { channel, forecast: f } of perChannel) {
+      lines.push(
+        `- **${channelLabel(channel)}**: opgebouwd ${fmtNum(f.currentCumulative)}${f.projectedFinal != null ? `, projectie ${fmtNum(f.projectedFinal)}` : " (geen projectie)"} (${f.method}, zekerheid ${f.confidence}).`
+      );
+    }
+    lines.push(
+      `- **Totaal**: opgebouwd **${fmtNum(blended.currentCumulative)}**${blended.projectedFinal != null ? `, geprojecteerd op **${fmtNum(blended.projectedFinal)}** op de beurs` : " (geen totaalprojectie)"}${blended.target != null && blended.projectedVsTargetPct != null ? ` — **${Math.round(blended.projectedVsTargetPct * 100)}%** van het totaal-doel (${blended.willHitTarget ? "haalt het" : "MIST het"})` : ""}.`,
+      `- Zekerheid van het totaal: **${blended.confidence}** (zwakste schakel); ${blended.note}.`
     );
   }
 

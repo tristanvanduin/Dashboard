@@ -54,6 +54,34 @@ console.log("volledige analyse (aanloop achter, spend gelijk):");
   assert(/week-tempo overgeslagen/.test(res.markdown), "maand-granulariteit expliciet gedegradeerd");
 }
 
+console.log("universele blended beursprojectie (Google + Meta + LinkedIn):");
+{
+  const rows: CampaignMonthlyRow[] = [
+    row("2025-12-01", 10, 1400), row("2026-01-01", 12, 1400), row("2026-02-01", 14, 1400),
+  ];
+  // Meta/LinkedIn als dag-conversiepunten binnen het huidige beursvenster (voor de peildatum).
+  const metaPoints = [{ date: "2026-01-01", value: 8 }, { date: "2026-02-01", value: 10 }];
+  const liPoints = [{ date: "2026-01-01", value: 4 }, { date: "2026-02-01", value: 5 }];
+  const res = analyzeGeoClone({
+    geoClone: "GRT", fairLabel: "GreenTech Amsterdam", rows, cadence: "annual",
+    editions: [{ date: "2025-06-12", label: "2025" }, { date: "2026-06-10", label: "2026" }],
+    conversionsTarget: 120, asOfDate: "2026-03-01",
+    channelConvPoints: [
+      { channel: "meta_ads", points: metaPoints, target: 40 },
+      { channel: "linkedin_ads", points: liPoints, target: 20 },
+    ],
+  });
+  assert(res.perChannelForecast.length === 3, "forecast per kanaal: Google + Meta + LinkedIn");
+  assert(res.perChannelForecast.map((c) => c.channel).sort().join(",") === "google_ads,linkedin_ads,meta_ads", "de drie kanalen zitten erin");
+  assert(res.blendedForecast !== null, "er is een blended totaal-forecast");
+  assert(res.forecast === res.perChannelForecast.find((c) => c.channel === "google_ads")!.forecast, "het bestaande forecast-veld blijft de Google-stream");
+  const sumProj = res.perChannelForecast.reduce((s, c) => s + (c.forecast.projectedFinal ?? 0), 0);
+  assert(res.blendedForecast!.projectedFinal === Math.round(sumProj), "het totaal is de som van de kanaal-projecties");
+  assert(res.blendedForecast!.target === 180, "het totaal-doel telt op (120 + 40 + 20)");
+  assert(/Beursprojectie over alle kanalen/.test(res.markdown), "de blended sectie staat in de markdown");
+  assert(/Totaal/.test(res.markdown), "het totaal wordt benoemd");
+}
+
 console.log("degradatiepaden:");
 {
   const geenEdities = analyzeGeoClone({
