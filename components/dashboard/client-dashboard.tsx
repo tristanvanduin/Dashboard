@@ -42,6 +42,7 @@ import { CrossChannelView } from "./cross-channel-view";
 import { BrandingView } from "./branding-view";
 import { EventSettings } from "./event-settings";
 import { GeoCloneSettingsPanel } from "./geo-clone-settings";
+import { ChannelConversionSettings } from "./channel-conversion-settings";
 import { GeoCloneScope } from "./geo-clone-scope";
 import { GeoCloneOverview } from "./geo-clone-overview";
 import { TrackingAlert } from "./tracking-alert";
@@ -427,6 +428,8 @@ export function ClientDashboard({ client }: { client: Client }) {
                       <ClientSettingsPanel clientId={client.id} clientName={client.name} />
                     </div>
                   </details>
+                  {/* Conversie-selectie voor Meta/LinkedIn: het equivalent van de Google-conversie-acties. */}
+                  <ChannelConversionSettings clientId={client.id} />
                   <details className="rounded-xl border border-border bg-white shadow-sm">
                     <summary className="cursor-pointer px-6 py-4 text-sm font-semibold text-rm-blue">
                       Branding (merk-identiteit en live preview)
