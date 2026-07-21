@@ -229,21 +229,27 @@ const linkedinCampaignDaily: Row[] = LI_CAMP_DEFS.flatMap((c) =>
 // linkedin_demographic_daily + labels: functie/seniority-segmenten met een dure verspiller
 // (Sales / Entry) en een efficiënte schaalkans (Marketing), zodat de demografie-segment-
 // efficiëntie-detector in de demo iets vindt.
+// drift: verschuiving van het lead-aandeel over de tijd (+ = stijgend recent, − = dalend),
+// zodat naast de segment-efficiëntie ook de demografie-drift-detector iets vindt.
 const LI_DEMO_SEGMENTS = [
-  { pivot: "MEMBER_JOB_FUNCTION", urn: "urn:li:function:8", label: "Engineering", spend: 20, leads: 0.8 },
-  { pivot: "MEMBER_JOB_FUNCTION", urn: "urn:li:function:25", label: "Sales", spend: 14, leads: 0.12 },
-  { pivot: "MEMBER_JOB_FUNCTION", urn: "urn:li:function:15", label: "Marketing", spend: 4, leads: 0.28 },
-  { pivot: "MEMBER_SENIORITY", urn: "urn:li:seniority:5", label: "Senior", spend: 22, leads: 0.9 },
-  { pivot: "MEMBER_SENIORITY", urn: "urn:li:seniority:1", label: "Entry", spend: 8, leads: 0.06 },
+  { pivot: "MEMBER_JOB_FUNCTION", urn: "urn:li:function:8", label: "Engineering", spend: 20, leads: 0.8, drift: 0 },
+  { pivot: "MEMBER_JOB_FUNCTION", urn: "urn:li:function:25", label: "Sales", spend: 14, leads: 0.12, drift: -0.7 },
+  { pivot: "MEMBER_JOB_FUNCTION", urn: "urn:li:function:15", label: "Marketing", spend: 4, leads: 0.28, drift: 0.7 },
+  { pivot: "MEMBER_SENIORITY", urn: "urn:li:seniority:5", label: "Senior", spend: 22, leads: 0.9, drift: 0 },
+  { pivot: "MEMBER_SENIORITY", urn: "urn:li:seniority:1", label: "Entry", spend: 8, leads: 0.06, drift: 0 },
 ];
+const LI_DEMO_DAYS = 60;
 const linkedinDemographicDaily: Row[] = LI_DEMO_SEGMENTS.flatMap((s) =>
-  Array.from({ length: 40 }, (_, d) => {
-    const f = dayFactor(39 - d, s.label.length);
+  Array.from({ length: LI_DEMO_DAYS }, (_, d) => {
+    const age = LI_DEMO_DAYS - 1 - d; // dagen geleden
+    const f = dayFactor(age, s.label.length);
+    const recency = 1 - age / (LI_DEMO_DAYS - 1); // 0 oudste → 1 nieuwste
+    const driftMul = 1 + (s.drift ?? 0) * (recency - 0.5) * 2; // van (1−drift) naar (1+drift)
     return {
-      client_id: CID, date: dayISO(39 - d), level: "account", entity_urn: "urn:li:account:demo",
+      client_id: CID, date: dayISO(age), level: "account", entity_urn: "urn:li:account:demo",
       pivot_type: s.pivot, pivot_value_urn: s.urn,
       impressions: Math.round(1500 * f), clicks: Math.round(20 * f), spend: Math.round(s.spend * f),
-      leads: s.leads * f, conversions: s.leads * f * 0.3, coverage_pct: 0.8,
+      leads: s.leads * f * driftMul, conversions: s.leads * f * driftMul * 0.3, coverage_pct: 0.8,
     };
   })
 );

@@ -10,6 +10,7 @@ import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { buildLinkedInSignals } from "@/lib/signals/linkedin-signals";
 import { buildLinkedInDemographicSignals, type LinkedInDemographicRow } from "@/lib/signals/linkedin-demographic";
 import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/signals/budget-concentration";
+import { buildDemographicDriftSignals, type DemographicDriftRow } from "@/lib/signals/demographic-drift";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { shapeLinkedInInputs, type LinkedInDailyRow } from "@/lib/analysis/channel-signal-data";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
     supabase.from("linkedin_campaigns").select("campaign_urn, name").eq("client_id", clientId),
     supabase
       .from("linkedin_demographic_daily")
-      .select("pivot_type, pivot_value_urn, spend, leads")
+      .select("pivot_type, pivot_value_urn, date, spend, leads")
       .eq("client_id", clientId)
       .gte("date", since),
     supabase.from("linkedin_urn_labels").select("urn, label"),
@@ -107,10 +108,22 @@ export async function POST(request: NextRequest) {
   }
   const liBudgetEntities: BudgetEntityRow[] = [...liTotals.entries()].map(([urn, t]) => ({ name: names.get(urn) ?? urn, spend: t.spend, conversions: t.conversions }));
 
+  // Demografie-drift: verschuift de converterende mix over de tijd?
+  const driftRows: DemographicDriftRow[] = (demoRes.data ?? [])
+    .map((r) => {
+      const dimension = PIVOT_TO_DIM[String(r.pivot_type ?? "")];
+      const urn = String(r.pivot_value_urn ?? "");
+      if (!dimension || !urn || urn === "TOTAL" || !r.date) return null;
+      return { dimension, value: urnLabel.get(urn) ?? urn, date: String(r.date), leads: num(r.leads) };
+    })
+    .filter((r): r is DemographicDriftRow => r !== null);
+  const asOfDate = new Date().toISOString().slice(0, 10);
+
   const merged = mergeDetections([
     buildLinkedInSignals({ entities }),
     buildLinkedInDemographicSignals(demoRows),
     buildBudgetConcentrationSignals(liBudgetEntities, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
+    buildDemographicDriftSignals(driftRows, asOfDate),
   ]);
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "LinkedIn");
 
