@@ -6,7 +6,7 @@
 // blijven immers stabiel). Hoge precisie: alleen alarm bij een verrassende nul. Puur, los getest.
 
 import type { DetectionResult, SignalStory, SignalEvidence } from "@/lib/signals/types";
-import type { Ga4DailyRow } from "./types";
+import type { Ga4DailyRow, Ga4Device } from "./types";
 
 export const GA4_TG_RECENT_DAYS = 4;
 export const GA4_TG_BASELINE_DAYS = 28;
@@ -124,4 +124,61 @@ export function buildGa4CroSignals(rows: Ga4DailyRow[], opts: { idPrefix?: strin
   }
 
   return { triggered, checked: [id] };
+}
+
+// ── CRO-signaal: device-kloof (mobile vs desktop) ───────────────────────────
+// Converteert PAID mobiel verkeer op de site materieel slechter dan desktop? Klassieke CRO-vraag
+// (mobiele landingpage/formulier/snelheid) die de advertentieplatformdata niet als zodanig ziet.
+// Site-breed over de paid-kanalen samen, over één venster. certainty "indicatie".
+
+export const GA4_DEV_WINDOW_DAYS = 28;
+export const GA4_DEV_MIN_SESSIONS = 300;      // per device-zijde
+export const GA4_DEV_MIN_DESKTOP_KEY_EVENTS = 12;
+export const GA4_DEV_GAP_RATIO = 0.7;         // mobiel ≤ 70% van desktop = materieel slechter
+
+const PAID_CHANNELS = new Set(["google", "meta", "linkedin"]);
+
+export function buildGa4DeviceCroSignals(rows: Ga4DailyRow[], opts: { idPrefix?: string } = {}): DetectionResult {
+  const idPrefix = opts.idPrefix ?? "ga4";
+  const id = `${idPrefix}_cro_device_gap`;
+  const now = Date.now();
+  const ageOf = (date: string): number => (now - Date.parse(date)) / 86_400_000;
+
+  const byDevice = new Map<Ga4Device, { sessions: number; key: number }>();
+  for (const r of rows) {
+    if (!r.device || !PAID_CHANNELS.has(r.channel)) continue; // alleen paid, alleen met device
+    const age = ageOf(r.date);
+    if (!Number.isFinite(age) || age < 0 || age >= GA4_DEV_WINDOW_DAYS) continue;
+    const a = byDevice.get(r.device) ?? { sessions: 0, key: 0 };
+    a.sessions += r.sessions; a.key += r.keyEvents;
+    byDevice.set(r.device, a);
+  }
+
+  const mobile = byDevice.get("mobile");
+  const desktop = byDevice.get("desktop");
+  if (!mobile || !desktop) return { triggered: [], checked: [id] };
+  // Beide zijden moeten materieel volume hebben en desktop moet normaal converteren.
+  if (mobile.sessions < GA4_DEV_MIN_SESSIONS || desktop.sessions < GA4_DEV_MIN_SESSIONS || desktop.key < GA4_DEV_MIN_DESKTOP_KEY_EVENTS) {
+    return { triggered: [], checked: [id] };
+  }
+  const mobileRate = mobile.key / mobile.sessions;
+  const desktopRate = desktop.key / desktop.sessions;
+  if (desktopRate <= 0 || mobileRate > desktopRate * GA4_DEV_GAP_RATIO) return { triggered: [], checked: [id] };
+
+  const gapPct = Math.round((1 - mobileRate / desktopRate) * 100);
+  const story: SignalStory = {
+    id: `${idPrefix}_cro_device_mobile`,
+    category: "cross_channel",
+    scope: "Paid mobiel verkeer (GA4-website)",
+    story: `Paid mobiel verkeer converteert op de site met ${round1(mobileRate * 100)}% key-event-ratio, ${gapPct}% onder desktop (${round1(desktopRate * 100)}%): het mobiele scherm blijft materieel achter.`,
+    actionDirection: `beoordeel de mobiele landingpage-ervaring (snelheid, formulierlengte, tap-targets, sticky CTA) — dit is een CRO-kwestie op de site, niet per se een mediakwestie`,
+    certainty: "indicatie",
+    evidence: [
+      ev(`mobiel sessies (${GA4_DEV_WINDOW_DAYS}d)`, String(Math.round(mobile.sessions))),
+      ev("mobiel key-event-ratio", `${round1(mobileRate * 100)}%`),
+      ev("desktop key-event-ratio", `${round1(desktopRate * 100)}%`),
+      ev("kloof", `${gapPct}%`),
+    ],
+  };
+  return { triggered: [story], checked: [id] };
 }

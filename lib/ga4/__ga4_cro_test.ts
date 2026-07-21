@@ -4,9 +4,9 @@ export {};
 // stil bij een gezonde mix, en "other" (organisch/direct) wordt nooit zelf beoordeeld.
 // Draaien: npx tsx lib/ga4/__ga4_cro_test.ts
 
-import { buildGa4CroSignals, GA4_CRO_WINDOW_DAYS } from "./signals";
+import { buildGa4CroSignals, buildGa4DeviceCroSignals, GA4_CRO_WINDOW_DAYS, GA4_DEV_WINDOW_DAYS } from "./signals";
 import { buildGa4DemoRows } from "@/lib/demo/ga4-demo";
-import type { Ga4DailyRow, Ga4Channel } from "./types";
+import type { Ga4DailyRow, Ga4Channel, Ga4Device } from "./types";
 
 const day = (ageDays: number): string => new Date(Date.now() - ageDays * 86_400_000).toISOString().slice(0, 10);
 
@@ -64,6 +64,53 @@ console.log("\n4. Demodata: de Meta-CRO-kloof is zichtbaar in demo-greentech");
 {
   const r = buildGa4CroSignals(buildGa4DemoRows(new Date()));
   check("demo triggert de Meta-CRO-kloof", r.triggered.some((s) => s.id === "ga4_cro_gap_meta"), `ids=${r.triggered.map((s) => s.id).join(",")}`);
+}
+
+// ── Device-kloof (mobile vs desktop) ────────────────────────────────────────
+function flatDevice(spec: { channel: Ga4Channel; device: Ga4Device; sessions: number; rate: number }[]): Ga4DailyRow[] {
+  const out: Ga4DailyRow[] = [];
+  for (let a = 0; a < GA4_DEV_WINDOW_DAYS; a++) {
+    for (const s of spec) {
+      out.push({ date: day(a), channel: s.channel, device: s.device, sessions: s.sessions, engagedSessions: Math.round(s.sessions * 0.6), keyEvents: Math.round(s.sessions * s.rate), funnel: {} });
+    }
+  }
+  return out;
+}
+
+console.log("\n5. Mobiel converteert ver onder desktop (paid) → device-alarm");
+{
+  const r = buildGa4DeviceCroSignals(flatDevice([
+    { channel: "google", device: "desktop", sessions: 140, rate: 0.06 },
+    { channel: "google", device: "mobile", sessions: 120, rate: 0.02 },
+    { channel: "meta", device: "desktop", sessions: 40, rate: 0.05 },
+    { channel: "meta", device: "mobile", sessions: 40, rate: 0.015 },
+  ]));
+  check("precies één device-signaal", r.triggered.length === 1, `triggered=${r.triggered.length}`);
+  check("het gaat over mobiel", r.triggered[0]?.id === "ga4_cro_device_mobile", r.triggered[0]?.id);
+  check("categorie = cross_channel", r.triggered[0]?.category === "cross_channel");
+}
+
+console.log("\n6. Mobiel ~gelijk aan desktop → stil");
+{
+  const r = buildGa4DeviceCroSignals(flatDevice([
+    { channel: "google", device: "desktop", sessions: 140, rate: 0.05 },
+    { channel: "google", device: "mobile", sessions: 120, rate: 0.048 },
+  ]));
+  check("geen device-alarm bij gelijke ratio", r.triggered.length === 0, `triggered=${r.triggered.length}`);
+}
+
+console.log("\n7. Rijen zonder device → geen device-oordeel (backward-compatible)");
+{
+  const r = buildGa4DeviceCroSignals(flatDevice([]).concat([
+    { date: day(1), channel: "google", sessions: 500, engagedSessions: 300, keyEvents: 2, funnel: {} },
+  ]));
+  check("geen device-signaal zonder device-veld", r.triggered.length === 0);
+}
+
+console.log("\n8. Demodata: de mobiele CRO-kloof is zichtbaar in demo-greentech");
+{
+  const r = buildGa4DeviceCroSignals(buildGa4DemoRows(new Date()));
+  check("demo triggert de mobiele device-kloof", r.triggered.some((s) => s.id === "ga4_cro_device_mobile"), `ids=${r.triggered.map((s) => s.id).join(",")}`);
 }
 
 console.log(`\nRESULTAAT: ${passed} geslaagd, ${failed} gefaald\n`);

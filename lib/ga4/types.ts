@@ -15,6 +15,10 @@ export type EvidenceBasis = "platform" | "ga4" | "combined" | "estimated";
 // Meta/LinkedIn (organisch, direct, e-mail): telt mee voor het website-totaal, niet per kanaal.
 export type Ga4Channel = "google" | "meta" | "linkedin" | "other";
 
+// GA4 deviceCategory. Optioneel op de dagrij: detectoren die device negeren aggregeren gewoon
+// over alle waarden; de device-CRO-detector kijkt alleen naar rijen met een device.
+export type Ga4Device = "mobile" | "desktop" | "tablet";
+
 // Per-klant GA4-configuratie (uit client_settings.ga4_config). keyEvents = de events die als
 // key event/conversie tellen; funnelSteps = de geordende events van de website-funnel.
 export interface Ga4Config {
@@ -27,6 +31,7 @@ export interface Ga4Config {
 export interface Ga4DailyRow {
   date: string; // YYYY-MM-DD
   channel: Ga4Channel;
+  device?: Ga4Device; // optioneel: aanwezig zodra de device-breakdown is opgehaald
   sessions: number;
   engagedSessions: number;
   keyEvents: number;
