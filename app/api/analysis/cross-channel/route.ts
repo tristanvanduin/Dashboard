@@ -12,6 +12,8 @@ import { NextRequest } from "next/server";
 import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { buildCrossChannelSignals, type ChannelMonthlyInput, type BrandMonthlyInput } from "@/lib/signals/cross-channel";
 import { buildCrossChannelFunnelSignals } from "@/lib/signals/cross-channel-funnel";
+import { buildCrossChannelKpiRelations } from "@/lib/analysis/cross-channel-kpi";
+import type { KpiWindow } from "@/lib/analysis/kpi-relations";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { audienceContradiction, type ConvertingSegment, type TargetProfile, type AudienceDimension } from "@/lib/cross-channel/audience-coherence";
 import type { ChannelKey } from "@/lib/cross-channel/lens-facts";
@@ -180,13 +182,41 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // ── KPI-verhoudingen over de kanalen: per kanaal het laatste volle maandvenster vs het
+  // vorige, geblend en geplafonneerd op indicatie (attributie verschilt per platform). De
+  // conversie-actie is conversies + leads samen, zodat lead-gen- en sale-kanalen samentellen. ──
+  const byChannel = new Map<string, ChannelMonthlyInput[]>();
+  for (const c of channels) {
+    const arr = byChannel.get(c.channel) ?? [];
+    arr.push(c);
+    byChannel.set(c.channel, arr);
+  }
+  const kpiRecentWindows: KpiWindow[] = [];
+  const kpiPriorWindows: KpiWindow[] = [];
+  let kpiRecentLabel = "recent";
+  let kpiPriorLabel = "vorige";
+  for (const [channel, rows] of byChannel) {
+    const sorted = [...rows].sort((a, b) => a.month.localeCompare(b.month));
+    if (sorted.length < 2) continue;
+    const recent = sorted[sorted.length - 1];
+    const prior = sorted[sorted.length - 2];
+    kpiRecentLabel = recent.month.slice(0, 7);
+    kpiPriorLabel = prior.month.slice(0, 7);
+    kpiRecentWindows.push({ label: channel, impressions: recent.impressions, clicks: recent.clicks, cost: recent.spend, conversions: recent.conversions + recent.leads });
+    kpiPriorWindows.push({ label: channel, impressions: prior.impressions, clicks: prior.clicks, cost: prior.spend, conversions: prior.conversions + prior.leads });
+  }
+  const kpiRelations = buildCrossChannelKpiRelations(kpiRecentWindows, kpiPriorWindows, { recent: kpiRecentLabel, prior: kpiPriorLabel });
+  if (kpiRecentWindows.length < 2) {
+    degradations.push("KPI-verhoudingen: minder dan twee kanalen met twee volle maanden; de blended CPA-decompositie/verzadiging kan niet over de mix worden gelegd");
+  }
+
   // ── Detectors + samenvoegen + renderen. ──
   const detected = buildCrossChannelSignals({ channels, brand });
   // Funnel over de kanalen heen: blended totaal-funnel, fase-achterblijver en divergentie.
   const funnel = buildCrossChannelFunnelSignals(channels);
   const merged = {
-    triggered: [...detected.triggered, ...funnel.triggered, ...audienceStories],
-    checked: [...detected.checked, ...funnel.checked, "cross_audience_samenhang"],
+    triggered: [...detected.triggered, ...funnel.triggered, ...kpiRelations.triggered, ...audienceStories],
+    checked: [...detected.checked, ...funnel.checked, ...kpiRelations.checked, "cross_audience_samenhang"],
   };
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Cross-channel");
 
