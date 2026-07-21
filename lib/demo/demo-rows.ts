@@ -31,7 +31,7 @@ function dayFactor(d: number, seed: number): number {
   return trend * weekend * noise;
 }
 
-const N_MONTHS = 13;
+const N_MONTHS = 25; // twee jaar historie zodat de vorige beurs-editie een volledige curve heeft
 
 // ── ads_campaign_monthly: per campagne × 13 maanden (voedt o.a. het beurs/geo-clone-overzicht) ──
 const CAMPAIGNS = [
@@ -230,6 +230,22 @@ const clientFiles: Row[] = [
   { id: "demo-file-4", client_id: CID, folder: "Rapportages", file_name: "Maandrapportage_juni_2026.pdf", file_size: 962560, content_type: "application/pdf", storage_path: `${CID}/Rapportages/demo-rapport.pdf`, uploaded_at: dayISO(12) },
 ];
 
+// client_settings: merk-identiteit, beurs-edities (voor de event-relatieve beursforecast) en
+// KPI-doelen. De edities geven elke geo-clone een huidige + vorige beurs, zodat de
+// dagen-tot-beurs-projectie (incl. het blended totaal over de kanalen) in de demo echt draait.
+const clientSettings: Row[] = [{
+  client_id: CID,
+  brand_guide: { brandName: "GreenTech", visual: { primaryColor: "#0B7A3B", accentColor: "#8BC34A", secondaryColor: "#0A3D2C", headingFont: "Gilroy, Ubuntu, sans-serif" } },
+  rai_events: {
+    events: [
+      { abbrev: "GRT", cadence: "annual", editions: [{ date: "2025-08-25", label: "2025" }, { date: "2026-08-25", label: "2026" }] },
+      { abbrev: "GRA", cadence: "annual", editions: [{ date: "2025-09-15", label: "2025" }, { date: "2026-09-15", label: "2026" }] },
+      { abbrev: "GRN", cadence: "annual", editions: [{ date: "2025-10-06", label: "2025" }, { date: "2026-10-06", label: "2026" }] },
+    ],
+  },
+  kpi_targets: { conversionsAbsolute: 700, revenueAbsolute: 90000, roasTarget: 4, cpaTarget: 60 },
+}];
+
 // De volledige map; tabellen die hier niet in staan → passthrough naar de echte client.
 export function demoRows(): Record<string, Row[]> {
   return {
@@ -260,5 +276,6 @@ export function demoRows(): Record<string, Row[]> {
     client_folders: clientFolders,
     client_files: clientFiles,
     blended_account_monthly: blendedAccountMonthly,
+    client_settings: clientSettings,
   };
 }
