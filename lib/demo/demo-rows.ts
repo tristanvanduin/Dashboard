@@ -159,6 +159,8 @@ const metaAccountDaily: Row[] = Array.from({ length: 150 }, (_, d) => {
 const META_CAMPAIGNS = [
   { id: "demo-mcamp-aw", name: "GRT | Awareness EU", imp: 2500, clk: 48, spend: 117, conv: 7, seed: 0 },
   { id: "demo-mcamp-rt", name: "GRT | Retargeting NL", imp: 800, clk: 30, spend: 44, conv: 6, seed: 4 },
+  // Dominante, slecht converterende campagne: voedt de budget-concentratie-detector.
+  { id: "demo-mcamp-pro", name: "GRT | Prospecting breed", imp: 6000, clk: 55, spend: 210, conv: 3, seed: 6 },
 ];
 const metaCampaigns: Row[] = META_CAMPAIGNS.map((c) => ({ client_id: CID, campaign_id: c.id, name: c.name, status: "ACTIVE" }));
 const metaCampaignDaily: Row[] = META_CAMPAIGNS.flatMap((c) =>
@@ -190,7 +192,11 @@ const metaBreakdownDaily: Row[] = META_BD_SEGMENTS.flatMap((s) =>
   })
 );
 
-const LI_CAMPAIGNS = [{ urn: "urn:li:demo:1", name: "GRT | Leadgen NL" }, { urn: "urn:li:demo:2", name: "GRT | Thought Leadership" }];
+const LI_CAMPAIGNS = [
+  { urn: "urn:li:demo:1", name: "GRT | Leadgen NL" },
+  { urn: "urn:li:demo:2", name: "GRT | Thought Leadership" },
+  { urn: "urn:li:demo:3", name: "GRT | Brede awareness" },
+];
 const linkedinCampaigns: Row[] = LI_CAMPAIGNS.map((c) => ({ client_id: CID, campaign_urn: c.urn, name: c.name, status: "ACTIVE", objective_type: "LEAD_GENERATION" }));
 const linkedinCreatives: Row[] = [
   { client_id: CID, creative_urn: "urn:li:demo:cr1", headline: "Ontmoet de tuinbouwsector op GreenTech", post_text: "Registreer uw team voor de vakbeurs.", image_storage_path: "https://picsum.photos/seed/li-greentech-1/320/200", cta_label: "Registreren", landing_url: "https://demo.greentech-fictief.example/li", format: "single_image" },
@@ -209,7 +215,13 @@ const linkedinAccountDaily: Row[] = Array.from({ length: 150 }, (_, d) => {
   return { client_id: CID, date: dayISO(day), impressions: agg.impressions, clicks: agg.clicks, spend: agg.spend, external_website_conversions: Math.round(agg.leads * 0.3), one_click_leads: agg.leads };
 });
 // linkedin_campaign_daily voedt de ChannelPerformance-view (per campagne).
-const LI_CAMP_DEFS = LI_CAMPAIGNS.map((c, i) => ({ urn: c.urn, imp: 900 + i * 300, clk: 16 + i * 4, spend: 55 + i * 12, leads: 5 + i * 2, seed: i * 2 }));
+// Expliciet i.p.v. formule: 'Brede awareness' domineert de spend maar levert weinig leads,
+// zodat de budget-concentratie-detector in de demo een onderpresteerder vindt.
+const LI_CAMP_DEFS = [
+  { urn: "urn:li:demo:1", imp: 900, clk: 16, spend: 40, leads: 6, seed: 0 },
+  { urn: "urn:li:demo:2", imp: 1200, clk: 20, spend: 30, leads: 5, seed: 2 },
+  { urn: "urn:li:demo:3", imp: 4000, clk: 30, spend: 120, leads: 2, seed: 4 },
+];
 const linkedinCampaignDaily: Row[] = LI_CAMP_DEFS.flatMap((c) =>
   Array.from({ length: 150 }, (_, d) => { const f = dayFactor(149 - d, c.seed); return { client_id: CID, entity_urn: c.urn, date: dayISO(149 - d), impressions: Math.round(c.imp * f), clicks: Math.round(c.clk * f), spend: Math.round(c.spend * f), external_website_conversions: Math.round(f), one_click_leads: Math.max(0, Math.round(c.leads * f)) }; })
 );
