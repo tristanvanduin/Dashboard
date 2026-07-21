@@ -11,6 +11,7 @@ import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { analyzeGeoClone } from "@/lib/rai/geo-clone-analysis";
 import { RAI_GEO_CLONES, matchGeoCloneByCampaignName } from "@/lib/rai/geo-clone-catalog";
 import type { DailyPoint } from "@/lib/rai/event-time-axis";
+import { resolveChannelConversionConfig, sumSelectedConversions, type ChannelConversionConfig } from "@/lib/analysis/channel-conversion-config";
 import { resolveEvent, resolveGoals, type Edition, type Cadence } from "@/lib/rai/geo-clone-settings";
 import type { CampaignMonthlyRow } from "@/lib/rai/geo-clone-aggregate";
 import { saveProposalsReplacingPending, type SprintHypothesisRow } from "@/lib/second-opinion/findings-to-hypotheses";
@@ -63,12 +64,12 @@ export async function POST(request: NextRequest) {
       .select("campaign_name, month, impressions, clicks, cost, conversions, conversions_value")
       .eq("client_id", clientId)
       .order("month", { ascending: true }),
-    supabase.from("client_settings").select("rai_events, kpi_targets").eq("client_id", clientId).maybeSingle(),
+    supabase.from("client_settings").select("rai_events, kpi_targets, channel_conversion_config").eq("client_id", clientId).maybeSingle(),
     supabase.from("geo_clone_settings").select("goals, event").eq("client_id", clientId).eq("geo_clone", geoClone).maybeSingle(),
     supabase.from("meta_campaigns").select("campaign_id, name").eq("client_id", clientId),
-    supabase.from("meta_campaign_daily").select("entity_id, date, conversions").eq("client_id", clientId),
+    supabase.from("meta_campaign_daily").select("entity_id, date, conversions, leads").eq("client_id", clientId),
     supabase.from("linkedin_campaigns").select("campaign_urn, name").eq("client_id", clientId),
-    supabase.from("linkedin_campaign_daily").select("entity_urn, date, one_click_leads, external_website_conversions").eq("client_id", clientId),
+    supabase.from("linkedin_campaign_daily").select("entity_urn, date, one_click_leads, external_website_conversions, post_click_conversions").eq("client_id", clientId),
   ]);
 
   const rows = (rowsRes.data ?? []) as CampaignMonthlyRow[];
@@ -95,7 +96,10 @@ export async function POST(request: NextRequest) {
   // Meta/LinkedIn als dag-conversiepunten, gefilterd op de campagnes die bij deze beurs horen
   // (op campagnenaam via de geo-clone-catalogus). Zo krijgen ze dezelfde event-relatieve
   // forecast als Google en tellen ze mee in het blended beursbeeld.
-  const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  // Conversie-selectie per kanaal: welke velden tellen als conversie voor Meta/LinkedIn.
+  const convConfig: ChannelConversionConfig = resolveChannelConversionConfig(
+    (settingsRes.data?.channel_conversion_config ?? null) as Partial<ChannelConversionConfig> | null
+  );
   const buildPoints = (
     campaigns: { id: unknown; name: unknown }[],
     daily: { entity: unknown; date: unknown; value: number }[],
@@ -117,11 +121,11 @@ export async function POST(request: NextRequest) {
 
   const metaPoints = buildPoints(
     (metaCampRes.data ?? []).map((c) => ({ id: c.campaign_id, name: c.name })),
-    (metaDailyRes.data ?? []).map((r) => ({ entity: r.entity_id, date: r.date, value: n(r.conversions) })),
+    (metaDailyRes.data ?? []).map((r) => ({ entity: r.entity_id, date: r.date, value: sumSelectedConversions(r as Record<string, unknown>, "meta_ads", convConfig) })),
   );
   const liPoints = buildPoints(
     (liCampRes.data ?? []).map((c) => ({ id: c.campaign_urn, name: c.name })),
-    (liDailyRes.data ?? []).map((r) => ({ entity: r.entity_urn, date: r.date, value: n(r.one_click_leads) || n(r.external_website_conversions) })),
+    (liDailyRes.data ?? []).map((r) => ({ entity: r.entity_urn, date: r.date, value: sumSelectedConversions(r as Record<string, unknown>, "linkedin_ads", convConfig) })),
   );
 
   const channelConvPoints: { channel: string; points: DailyPoint[]; target?: number | null }[] = [];
