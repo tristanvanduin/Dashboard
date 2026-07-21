@@ -349,16 +349,39 @@ export function ClientDashboard({ client }: { client: Client }) {
 
           {activeTab === "forecast" && (
             <div className="space-y-6">
-              <ChannelTabs channel={channel} onChange={setChannel} />
-              {channel === "google" && <ForecastTable clientId={client.id} />}
-              {channel === "blended" && (
+              {geoClone ? (
+                // Beurs actief: de event-relatieve projectie (dagen-tot-beurs, blended over de
+                // kanalen) is de juiste tool. De kalenderjaar-prognose vertekent bij een event —
+                // die staat op "Hele account".
                 <>
-                  <ChannelForecast clientId={client.id} channel="blended" />
-                  <CrossChannelView clientId={client.id} />
+                  <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-2.5 text-[11px] text-blue-800">
+                    Je zit in de beurs <strong>{geoClone}</strong>. Hieronder de <strong>event-relatieve prognose</strong>
+                    {" "}(dagen-tot-beurs, over alle kanalen) — de juiste projectie voor een beurs. De kalenderjaar-prognose
+                    per kanaal staat op <strong>← Hele account</strong>.
+                  </div>
+                  <SignalAnalysisCard
+                    clientId={client.id}
+                    endpoint="/api/analysis/geo-clone"
+                    extra={{ geo_clone: geoClone }}
+                    title={`Beursprognose ${geoClone}`}
+                    description="Event-relatief: waar staat de aanloop naar deze editie t.o.v. dezelfde afstand tot de vorige editie, plus de projectie richting de beursdag per kanaal en het blended totaal tegen het doel."
+                    runLabel="Draai beursprognose"
+                  />
                 </>
-              )}
-              {(channel === "meta" || channel === "linkedin") && (
-                <ChannelForecast clientId={client.id} channel={channel} />
+              ) : (
+                <>
+                  <ChannelTabs channel={channel} onChange={setChannel} />
+                  {channel === "google" && <ForecastTable clientId={client.id} />}
+                  {channel === "blended" && (
+                    <>
+                      <ChannelForecast clientId={client.id} channel="blended" />
+                      <CrossChannelView clientId={client.id} />
+                    </>
+                  )}
+                  {(channel === "meta" || channel === "linkedin") && (
+                    <ChannelForecast clientId={client.id} channel={channel} />
+                  )}
+                </>
               )}
             </div>
           )}
