@@ -11,6 +11,9 @@
 //     eigenaar/niet-toegewezen, impact gemeten/geschat). Alles isMock = true → duidelijke badge.
 
 import type { FeedItem } from "./feed-item";
+import { ga4SignalToFeedItem } from "./adapters-ga4";
+import { buildGa4TrackingSignals } from "@/lib/ga4/signals";
+import { buildGa4DemoRows } from "@/lib/demo/ga4-demo";
 
 export const MOCK_TEAM = ["Tristan", "Sander", "Gabrielle"] as const;
 
@@ -70,7 +73,17 @@ export function demoFeedItems(clients: { id: string; name: string }[], now: Date
 
   const owner = (name: string) => ({ ownerId: `mock:${name}`, ownerName: name, ownerIsMock: true });
 
+  // GA4-feedkaart via de ECHTE pijplijn (demo-rows → detector → adapter), zodat de demo de
+  // werkelijke GA4-laag toont i.p.v. een losse hardcoded kaart. isMock = true voor de badge.
+  const ga4Client = c(0);
+  const ga4Signals = buildGa4TrackingSignals(buildGa4DemoRows(now));
+  const ga4Cards: FeedItem[] = ga4Signals.triggered.map((s) => ({
+    ...ga4SignalToFeedItem(s, ga4Client.id, ga4Client.name, iso(now)),
+    isMock: true,
+  }));
+
   return [
+    ...ga4Cards,
     // ── Kapot / tijdkritisch ──
     d({
       id: "demo:tracking-break", clientId: c(2).id, clientName: c(2).name, channel: "google",
