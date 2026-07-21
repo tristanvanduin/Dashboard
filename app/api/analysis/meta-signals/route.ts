@@ -14,6 +14,7 @@ import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/sig
 import { buildDemographicDriftSignals, type DemographicDriftRow } from "@/lib/signals/demographic-drift";
 import { buildSpendVelocitySignals, type SpendDailyRow } from "@/lib/signals/spend-velocity";
 import { buildWeekdayEfficiencySignals, type WeekdayRow } from "@/lib/signals/weekday-efficiency";
+import { buildTrackingGapSignals, type TrackingGapRow } from "@/lib/signals/tracking-gap";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { mergeDetections } from "@/lib/signals/types";
 import { shapeMetaAdInputs, shapeMetaLevelInputs, type MetaDailyRow } from "@/lib/analysis/channel-signal-data";
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
       .gte("date", since),
     supabase
       .from("meta_account_daily")
-      .select("date, spend, conversions")
+      .select("date, spend, conversions, link_clicks")
       .eq("client_id", clientId)
       .gte("date", since),
   ]);
@@ -124,6 +125,7 @@ export async function POST(request: NextRequest) {
     : [];
   const metaSpendDaily: SpendDailyRow[] = (accountRes.data ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend) }));
   const metaWeekdayRows: WeekdayRow[] = (accountRes.data ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend), conversions: num(r.conversions) }));
+  const metaTrackingRows: TrackingGapRow[] = (accountRes.data ?? []).map((r) => ({ date: String(r.date), clicks: num(r.link_clicks), conversions: num(r.conversions) }));
 
   const merged = mergeDetections([
     buildMetaCreativeSignals({ ads, levels }),
@@ -132,6 +134,7 @@ export async function POST(request: NextRequest) {
     buildDemographicDriftSignals(metaDriftRows, asOfDate, { outcomeLabel: "conversie", idPrefix: "meta_demographic_drift" }),
     buildSpendVelocitySignals(metaSpendDaily, { channelLabel: "Meta", idPrefix: "meta_budget" }),
     buildWeekdayEfficiencySignals(metaWeekdayRows, { channelLabel: "Meta", idPrefix: "meta_budget" }),
+    buildTrackingGapSignals(metaTrackingRows, { channelLabel: "Meta", idPrefix: "meta_budget" }),
   ]);
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Meta");
 

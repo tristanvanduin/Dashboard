@@ -9,6 +9,7 @@ import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/sig
 import { buildDemographicDriftSignals, type DemographicDriftRow } from "@/lib/signals/demographic-drift";
 import { buildSpendVelocitySignals, type SpendDailyRow } from "@/lib/signals/spend-velocity";
 import { buildWeekdayEfficiencySignals, type WeekdayRow } from "@/lib/signals/weekday-efficiency";
+import { buildTrackingGapSignals, type TrackingGapRow } from "@/lib/signals/tracking-gap";
 import { mergeDetections, type SignalStory, type SignalCertainty } from "@/lib/signals/types";
 
 // Deterministische structuur-analyse per kanaal, client-side (leest de dag-tabellen direct en
@@ -69,7 +70,7 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
           sb!.from("meta_breakdown_daily").select("breakdown_type, breakdown_value, date, impressions, link_clicks, spend, conversions").eq("client_id", clientId).gte("date", since),
           sb!.from("meta_campaign_daily").select("entity_id, spend, conversions").eq("client_id", clientId).gte("date", since),
           sb!.from("meta_campaigns").select("campaign_id, name").eq("client_id", clientId),
-          sb!.from("meta_account_daily").select("date, spend, conversions").eq("client_id", clientId).gte("date", since),
+          sb!.from("meta_account_daily").select("date, spend, conversions, link_clicks").eq("client_id", clientId).gte("date", since),
         ]);
         if (error) { if (!cancelled) { setError(error.message); setStories([]); } return; }
         const rows: MetaBreakdownRow[] = (data ?? []).map((r) => ({
@@ -84,12 +85,14 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
         const entities = toBudgetEntities((campDaily ?? []) as Record<string, unknown>[], "entity_id", "conversions", names);
         const spendDaily: SpendDailyRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend) }));
         const weekdayRows: WeekdayRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend), conversions: num(r.conversions) }));
+        const trackingRows: TrackingGapRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), clicks: num(r.link_clicks), conversions: num(r.conversions) }));
         const merged = mergeDetections([
           buildMetaBreakdownSignals(rows),
           buildBudgetConcentrationSignals(entities, { channelLabel: "Meta", idPrefix: "meta_budget" }),
           buildDemographicDriftSignals(driftRows, asOfDate, { outcomeLabel: "conversie", idPrefix: "meta_demographic_drift" }),
           buildSpendVelocitySignals(spendDaily, { channelLabel: "Meta", idPrefix: "meta_budget" }),
           buildWeekdayEfficiencySignals(weekdayRows, { channelLabel: "Meta", idPrefix: "meta_budget" }),
+          buildTrackingGapSignals(trackingRows, { channelLabel: "Meta", idPrefix: "meta_budget" }),
         ]);
         if (!cancelled) setStories(merged.triggered);
       } else {
@@ -98,7 +101,7 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
           sb!.from("linkedin_urn_labels").select("urn, label"),
           sb!.from("linkedin_campaign_daily").select("entity_urn, spend, one_click_leads").eq("client_id", clientId).gte("date", since),
           sb!.from("linkedin_campaigns").select("campaign_urn, name").eq("client_id", clientId),
-          sb!.from("linkedin_account_daily").select("date, spend, one_click_leads").eq("client_id", clientId).gte("date", since),
+          sb!.from("linkedin_account_daily").select("date, spend, one_click_leads, clicks").eq("client_id", clientId).gte("date", since),
         ]);
         if (demoErr) { if (!cancelled) { setError(demoErr.message); setStories([]); } return; }
         const urnLabel = new Map((labels ?? []).map((l) => [String(l.urn), String(l.label)]));
@@ -122,12 +125,14 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
         const entities = toBudgetEntities((campDaily ?? []) as Record<string, unknown>[], "entity_urn", "one_click_leads", names);
         const spendDaily: SpendDailyRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend) }));
         const weekdayRows: WeekdayRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend), conversions: num(r.one_click_leads) }));
+        const trackingRows: TrackingGapRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), clicks: num(r.clicks), conversions: num(r.one_click_leads) }));
         const merged = mergeDetections([
           buildLinkedInDemographicSignals(rows),
           buildBudgetConcentrationSignals(entities, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
           buildDemographicDriftSignals(driftRows, asOfDate),
           buildSpendVelocitySignals(spendDaily, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
           buildWeekdayEfficiencySignals(weekdayRows, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
+          buildTrackingGapSignals(trackingRows, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
         ]);
         if (!cancelled) setStories(merged.triggered);
       }
@@ -136,9 +141,10 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
     return () => { cancelled = true; };
   }, [clientId, channel]);
 
-  const { waste, scale, risk, drift, pacing } = useMemo(() => {
+  const { tracking, waste, scale, risk, drift, pacing } = useMemo(() => {
     const list = stories ?? [];
     return {
+      tracking: list.filter((s) => s.id.includes("_tracking_gap")),
       waste: list.filter((s) => s.id.includes("_waste_") || s.id.includes("_concentratie_onderpresteerder")),
       scale: list.filter((s) => s.id.includes("_scale_")),
       risk: list.filter((s) => s.id.includes("_concentratie_risico")),
@@ -167,6 +173,12 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
           </p>
         ) : (
           <div className="space-y-4">
+            {tracking.length > 0 && (
+              <div>
+                <p className="text-[11px] font-semibold text-red-700 uppercase tracking-wide mb-2 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Tracking-alarm</p>
+                <div className="space-y-2">{tracking.map((s) => <StoryRow key={s.id} s={s} />)}</div>
+              </div>
+            )}
             {waste.length > 0 && (
               <div>
                 <p className="text-[11px] font-semibold text-red-600 uppercase tracking-wide mb-2 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Verspilling</p>
