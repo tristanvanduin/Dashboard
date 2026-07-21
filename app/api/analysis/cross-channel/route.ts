@@ -19,6 +19,8 @@ import { audienceContradiction, type ConvertingSegment, type TargetProfile, type
 import type { ChannelKey } from "@/lib/cross-channel/lens-facts";
 import type { SignalStory } from "@/lib/signals/types";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
+import { fetchGa4Dataset, type Ga4SupabaseLike } from "@/lib/ga4/data-access";
+import { buildGa4CroSignals } from "@/lib/ga4/signals";
 
 const SECTION = "cross_channel_v1";
 const SOP_TYPE = "cross_channel";
@@ -210,13 +212,29 @@ export async function POST(request: NextRequest) {
     degradations.push("KPI-verhoudingen: minder dan twee kanalen met twee volle maanden; de blended CPA-decompositie/verzadiging kan niet over de mix worden gelegd");
   }
 
+  // ── GA4 CRO-signaal: welk paid-kanaal stuurt verkeer dat op de site slechter converteert dan
+  // gemiddeld (landingpage-fit)? Verklarende website-laag; leeg zonder GA4-config → degradeert
+  // expliciet. De getriggerde verhalen landen net als de andere in de goedkeuringswachtrij. ──
+  const ga4Cro = await (async () => {
+    try {
+      const dataset = await fetchGa4Dataset(clientId, { supabase: supabase as unknown as Ga4SupabaseLike });
+      if (dataset.availability === "absent") {
+        degradations.push(`GA4 CRO: ${dataset.limitations[0] ?? "geen GA4-data"}; de kanaal-conversie-kloof op de site is niet meetbaar`);
+        return { triggered: [] as SignalStory[], checked: ["ga4_cro_channel_gap"] };
+      }
+      return buildGa4CroSignals(dataset.rows);
+    } catch {
+      return { triggered: [] as SignalStory[], checked: ["ga4_cro_channel_gap"] };
+    }
+  })();
+
   // ── Detectors + samenvoegen + renderen. ──
   const detected = buildCrossChannelSignals({ channels, brand });
   // Funnel over de kanalen heen: blended totaal-funnel, fase-achterblijver en divergentie.
   const funnel = buildCrossChannelFunnelSignals(channels);
   const merged = {
-    triggered: [...detected.triggered, ...funnel.triggered, ...kpiRelations.triggered, ...audienceStories],
-    checked: [...detected.checked, ...funnel.checked, ...kpiRelations.checked, "cross_audience_samenhang"],
+    triggered: [...detected.triggered, ...funnel.triggered, ...kpiRelations.triggered, ...audienceStories, ...ga4Cro.triggered],
+    checked: [...detected.checked, ...funnel.checked, ...kpiRelations.checked, "cross_audience_samenhang", ...ga4Cro.checked],
   };
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Cross-channel");
 

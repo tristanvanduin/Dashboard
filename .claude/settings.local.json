@@ -53,7 +53,8 @@
       "Bash(sips -Z 1200 -s format jpeg /Users/juulr/Desktop/dashboard/public/images/cover-photo.png --out /Users/juulr/Desktop/dashboard/public/images/cover-photo.jpg)",
       "mcp__Claude_Code_Remote__delete_trigger",
       "mcp__Claude_Code_Remote__unsubscribe_pr_activity",
-      "Bash(cd /home/user/Dashboard *)"
+      "Bash(cd /home/user/Dashboard *)",
+      "Bash(npm run *)"
     ]
   }
 }

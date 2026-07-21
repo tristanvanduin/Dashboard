@@ -891,6 +891,10 @@ async function runMetaMonthlyAnalysis(
 
   const { canonicalMetricMap, stepFacts } = await buildMetaAnalysisData(supabase, clientId, periodEnd);
 
+  // GA4 als verklarende context (Meta), zelfde laag als Google. Leeg zonder GA4-config → SOP
+  // draait ongewijzigd door. Landt in stap 1 (account performance).
+  const ga4ContextText = (await channelGa4Context(clientId, adapter.channel, { supabase: supabase as unknown as Ga4SupabaseLike })).promptContext;
+
   // E1-wiring (Meta): het client-geheugen eenmalig ophalen, zelfde patroon als Google.
   const clientMemorySection = buildClientMemoryGrounding(await getClientMemory(supabase, clientId));
 
@@ -915,7 +919,8 @@ async function runMetaMonthlyAnalysis(
       adapter,
       clientMemorySection
     );
-    const userMessage = buildMetaStepMessage(stepNumber, stepFacts[stepNumber], clientId);
+    const userMessage = buildMetaStepMessage(stepNumber, stepFacts[stepNumber], clientId)
+      + (stepNumber === 1 && ga4ContextText ? `\n\n${ga4ContextText}` : "");
     const step = await runStep({ ...shared, stepNumber, stepName, systemPrompt, userMessage });
     allSteps.push(step);
     const priorStepConclusion = conclusions.at(-1);
@@ -1019,6 +1024,9 @@ async function runLinkedinMonthlyAnalysis(
 
   const { canonicalMetricMap, stepFacts } = await buildLinkedinAnalysisData(supabase, clientId, periodEnd, { icp });
 
+  // GA4 als verklarende context (LinkedIn), zelfde laag als Google/Meta. Leeg zonder GA4-config.
+  const ga4ContextText = (await channelGa4Context(clientId, adapter.channel, { supabase: supabase as unknown as Ga4SupabaseLike })).promptContext;
+
   // E1-wiring (LinkedIn): het client-geheugen eenmalig ophalen, zelfde patroon als Google.
   const clientMemorySection = buildClientMemoryGrounding(await getClientMemory(supabase, clientId));
 
@@ -1043,7 +1051,8 @@ async function runLinkedinMonthlyAnalysis(
       adapter,
       clientMemorySection
     );
-    const userMessage = buildLinkedinStepMessage(stepNumber, stepFacts[stepNumber], clientId);
+    const userMessage = buildLinkedinStepMessage(stepNumber, stepFacts[stepNumber], clientId)
+      + (stepNumber === 1 && ga4ContextText ? `\n\n${ga4ContextText}` : "");
     const step = await runStep({ ...shared, stepNumber, stepName, systemPrompt, userMessage });
     allSteps.push(step);
     const priorStepConclusion = conclusions.at(-1);
