@@ -55,9 +55,12 @@ export function CrossChannelView({ clientId }: { clientId: string }) {
 
   const months = rows ? [...new Set(rows.map((r) => r.month))] : [];
 
-  // Grafiek-data: spend per kanaal per maand (volle maanden oplopend), voor de gegroepeerde
-  // balken. De maandtabel eronder blijft het detail.
-  const chartMonths = [...months].sort();
+  // Grafiek-data: spend per kanaal per maand, gefocust op het recente advertentievenster
+  // (de laatste maanden richting de beurs) i.p.v. de hele historie. De maandtabel eronder toont
+  // het detail. Social (Meta/LinkedIn) draait doorgaans pas in de aanloop, dus dit venster laat
+  // de mix ook eerlijker zien.
+  const RECENT_MONTHS = 6;
+  const chartMonths = [...months].sort().slice(-RECENT_MONTHS);
   const chartSeries = [...new Set((rows ?? []).map((r) => CHANNEL_LABEL[r.channel] ?? r.channel))];
   const chartData = chartMonths.map((m) => {
     const row: Record<string, number | string> = { maand: m.slice(0, 7) };

@@ -60,7 +60,10 @@ export function GeoCloneOverview({ clientId, geoClone }: { clientId: string; geo
   }, [clientId]);
 
   const summary = useMemo(() => (rows ? aggregateCampaignMonthlyByGeoClone(rows, geoClone) : null), [rows, geoClone]);
-  const monthsDesc = useMemo(() => (summary ? [...summary.months].reverse() : []), [summary]);
+  // Focus op het advertentievenster: de recente maanden richting de beurs, niet de hele historie.
+  const RECENT_MONTHS = 6;
+  const recentMonths = useMemo(() => (summary ? summary.months.slice(-RECENT_MONTHS) : []), [summary]);
+  const monthsDesc = useMemo(() => [...recentMonths].reverse(), [recentMonths]);
 
   return (
     <div className="space-y-6">
@@ -109,14 +112,14 @@ export function GeoCloneOverview({ clientId, geoClone }: { clientId: string; geo
 
             <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
               <TrendingUp className="w-3.5 h-3.5" />
-              {summary.campaignCount} campagne{summary.campaignCount === 1 ? "" : "s"} over {summary.months.length} maand
-              {summary.months.length === 1 ? "" : "en"}.
+              {summary.campaignCount} campagne{summary.campaignCount === 1 ? "" : "s"} · laatste {recentMonths.length} maand
+              {recentMonths.length === 1 ? "" : "en"} getoond (van {summary.months.length}).
             </div>
 
             <MonthlyTrendChart
-              title="Maandverloop"
+              title="Maandverloop (laatste maanden richting de beurs)"
               lineLabel="Conversies"
-              data={summary.months.map((m) => ({ maand: m.month.slice(0, 7), spend: m.cost, lijn: m.conversions }))}
+              data={recentMonths.map((m) => ({ maand: m.month.slice(0, 7), spend: m.cost, lijn: m.conversions }))}
             />
 
             <div className="overflow-x-auto">
