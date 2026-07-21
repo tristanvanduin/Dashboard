@@ -484,6 +484,15 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
   // standaard op "Alle kanalen" (geen kanaal is belangrijker) en wisselt alleen op eigen klik.
   const onComplete = () => setRefreshKey((k) => k + 1);
 
+  // Sectiekop: scheidt de losse (deterministische) analyses bovenaan van de zware maand-SOP
+  // eronder, zodat je alle analyses ziet zonder dat een volledige SOP-uitwerking ze wegduwt.
+  const Section = ({ children }: { children: React.ReactNode }) => (
+    <div className="flex items-center gap-3 pt-1">
+      <span className="text-[10px] font-semibold text-rm-blue uppercase tracking-wide whitespace-nowrap">{children}</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       {/* Alle analyses draaien hier, per kanaal; de kanaaltabs elders zijn data-weergaven. */}
@@ -491,7 +500,7 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
 
       {analysisChannel === "google" && (
         <>
-          <SopTriggerButtons clientId={clientId} onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
+          <Section>Losse analyses</Section>
           <StandaloneAnalyses clientId={clientId} />
           <CreativeDeepDive clientId={clientId} channel="google" />
           <SignalAnalysisCard
@@ -509,11 +518,13 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
             description="Hoe KPI's zich tot elkaar verhouden: CPA-decompositie (klik duurder vs slechter converterend), belofte-kloof, verzadiging, bereik-verdunning en meer."
             runLabel="Analyseer verhoudingen"
           />
+          <Section>Maandrapportage (SOP)</Section>
+          <SopTriggerButtons clientId={clientId} onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
         </>
       )}
       {analysisChannel === "meta" && (
         <>
-          <SopTriggerButtons clientId={clientId} channel="meta_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
+          <Section>Losse analyses</Section>
           <MetaCreativeAnalyses clientId={clientId} />
           {/* Deterministische structuur-analyse (plaatsing/leeftijd/device), direct uit de data. */}
           <ChannelStructureAnalysis clientId={clientId} channel="meta" />
@@ -537,13 +548,15 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
             clientId={clientId}
             endpoint="/api/analysis/meta-signals"
             title="Meta-signalen"
-            description="Deterministische detectie: creative fatigue, frequency-saturatie, ranking-zwakte, hook/hold. Voedt de goedkeuringswachtrij."
+            description="Deterministische detectie: creative fatigue, frequency-saturatie, ranking-zwakte, hook/hold, plus segment-efficiëntie en budget-concentratie. Voedt de goedkeuringswachtrij."
           />
+          <Section>Maandrapportage (SOP)</Section>
+          <SopTriggerButtons clientId={clientId} channel="meta_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
         </>
       )}
       {analysisChannel === "linkedin" && (
         <>
-          <SopTriggerButtons clientId={clientId} channel="linkedin_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
+          <Section>Losse analyses</Section>
           {/* Deterministische structuur-analyse (functie/seniority/industrie/bedrijfsgrootte), direct uit de data. */}
           <ChannelStructureAnalysis clientId={clientId} channel="linkedin" />
           <CreativeDeepDive clientId={clientId} channel="linkedin" />
@@ -573,21 +586,31 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
             clientId={clientId}
             endpoint="/api/analysis/linkedin-signals"
             title="LinkedIn-signalen"
-            description="Deterministische detectie: lead-form drop-off, CPL-druk, engagement- en video-zwakte. Voedt de goedkeuringswachtrij."
+            description="Deterministische detectie: lead-form drop-off, CPL-druk, engagement- en video-zwakte, plus demografie-efficiëntie/-drift en budget-concentratie. Voedt de goedkeuringswachtrij."
           />
+          <Section>Maandrapportage (SOP)</Section>
+          <SopTriggerButtons clientId={clientId} channel="linkedin_ads" onAnalysisComplete={onComplete} onAnalysisError={onSopError} />
         </>
       )}
       {analysisChannel === "blended" && (
-        <SignalAnalysisCard
-          clientId={clientId}
-          endpoint="/api/analysis/cross-channel"
-          title="Cross-channel-signalen"
-          description="Deterministische detectie tussen kanalen: zaai-oogst, CPL-arbitrage, mix-shift, doelgroep-samenhang én de cross-funnel (blended totaal, fase-achterblijver, divergentie). Voedt de goedkeuringswachtrij."
-        />
+        <>
+          <Section>Losse analyses</Section>
+          <SignalAnalysisCard
+            clientId={clientId}
+            endpoint="/api/analysis/cross-channel"
+            title="Cross-channel-signalen"
+            description="Deterministische detectie tussen kanalen: zaai-oogst, CPL-arbitrage, mix-shift, doelgroep-samenhang, de cross-funnel (blended totaal, fase-achterblijver, divergentie) én de blended KPI-verhoudingen. Voedt de goedkeuringswachtrij."
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Cross-channel draait als één deterministische run; de sub-analyses (funnel, KPI-verhoudingen, mix-shift,
+            arbitrage, doelgroep-samenhang) staan als aparte secties in de uitkomst hierboven.
+          </p>
+        </>
       )}
 
-      <p className="text-[11px] text-muted-foreground">
-        De uitkomsten (wachtrij, inzichten, aanbevelingen, hypotheses, taken) staan in het tabblad <strong>Inzichten</strong>.
+      <p className="text-[11px] text-muted-foreground pt-2">
+        De uitkomsten (wachtrij, inzichten, aanbevelingen, hypotheses, taken) landen in het tabblad <strong>Bevindingen</strong>;
+        van de maand-SOP komt automatisch een <strong>PDF bij Bestanden</strong>.
       </p>
     </div>
   );
