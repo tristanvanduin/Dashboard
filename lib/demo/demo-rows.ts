@@ -37,6 +37,10 @@ const N_MONTHS = 25; // twee jaar historie zodat de vorige beurs-editie een voll
 // tempo-afwijking vindt. `daysAgo` = 0 is vandaag.
 const recentSpendBump = (daysAgo: number): number => (daysAgo < 6 ? 1.7 : 1);
 
+// Zondag converteert structureel slechter (spend gelijk, minder conversies), zodat de
+// weekday-efficiëntie-detector in de demo een dure dag vindt.
+const weekdayConvPenalty = (daysAgo: number): number => (new Date(Date.now() - daysAgo * 86_400_000).getUTCDay() === 0 ? 0.4 : 1);
+
 // ── ads_campaign_monthly: per campagne × 13 maanden (voedt o.a. het beurs/geo-clone-overzicht) ──
 const CAMPAIGNS = [
   { id: "demo-c-grt", name: "GRT | Search | NL", imp: 42000, clk: 2100, cost: 4200, conv: 60, aov: 130, seed: 0 },
@@ -157,7 +161,8 @@ const metaDayAgg = (day: number) => META_ADS.reduce((s, a) => {
 }, { impressions: 0, link_clicks: 0, spend: 0, conversions: 0 });
 const metaAccountDaily: Row[] = Array.from({ length: 150 }, (_, d) => {
   const day = 149 - d; const a = metaDayAgg(day);
-  return { client_id: CID, date: dayISO(day), impressions: a.impressions, link_clicks: a.link_clicks, spend: Math.round(a.spend * recentSpendBump(day)), conversions: a.conversions, leads: a.conversions };
+  const conv = a.conversions * weekdayConvPenalty(day);
+  return { client_id: CID, date: dayISO(day), impressions: a.impressions, link_clicks: a.link_clicks, spend: Math.round(a.spend * recentSpendBump(day)), conversions: conv, leads: conv };
 });
 // meta_campaigns + meta_campaign_daily voeden de ChannelPerformance-view (KPI's, maand-/campagnetabel).
 const META_CAMPAIGNS = [
@@ -222,7 +227,8 @@ const linkedinCreativeDaily: Row[] = LI_META.flatMap((c) =>
 const linkedinAccountDaily: Row[] = Array.from({ length: 150 }, (_, d) => {
   const day = 149 - d;
   const agg = LI_META.reduce((s, c) => { const f = dayFactor(day, c.seed); s.impressions += Math.round(c.imp * f); s.clicks += Math.round(c.clk * f); s.spend += Math.round(c.spend * f); s.leads += Math.max(0, Math.round(c.leads * f)); return s; }, { impressions: 0, clicks: 0, spend: 0, leads: 0 });
-  return { client_id: CID, date: dayISO(day), impressions: agg.impressions, clicks: agg.clicks, spend: Math.round(agg.spend * recentSpendBump(day)), external_website_conversions: Math.round(agg.leads * 0.3), one_click_leads: agg.leads };
+  const leads = agg.leads * weekdayConvPenalty(day);
+  return { client_id: CID, date: dayISO(day), impressions: agg.impressions, clicks: agg.clicks, spend: Math.round(agg.spend * recentSpendBump(day)), external_website_conversions: Math.round(leads * 0.3), one_click_leads: leads };
 });
 // linkedin_campaign_daily voedt de ChannelPerformance-view (per campagne).
 // Expliciet i.p.v. formule: 'Brede awareness' domineert de spend maar levert weinig leads,

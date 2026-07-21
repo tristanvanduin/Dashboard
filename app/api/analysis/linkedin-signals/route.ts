@@ -12,6 +12,7 @@ import { buildLinkedInDemographicSignals, type LinkedInDemographicRow } from "@/
 import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/signals/budget-concentration";
 import { buildDemographicDriftSignals, type DemographicDriftRow } from "@/lib/signals/demographic-drift";
 import { buildSpendVelocitySignals, type SpendDailyRow } from "@/lib/signals/spend-velocity";
+import { buildWeekdayEfficiencySignals, type WeekdayRow } from "@/lib/signals/weekday-efficiency";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { shapeLinkedInInputs, type LinkedInDailyRow } from "@/lib/analysis/channel-signal-data";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
       .eq("client_id", clientId)
       .gte("date", since),
     supabase.from("linkedin_urn_labels").select("urn, label"),
-    supabase.from("linkedin_account_daily").select("date, spend").eq("client_id", clientId).gte("date", since),
+    supabase.from("linkedin_account_daily").select("date, spend, one_click_leads").eq("client_id", clientId).gte("date", since),
   ]);
 
   const rows = (dailyRes.data ?? []) as LinkedInDailyRow[];
@@ -122,6 +123,7 @@ export async function POST(request: NextRequest) {
   const asOfDate = new Date().toISOString().slice(0, 10);
 
   const liSpendDaily: SpendDailyRow[] = (accountRes.data ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend) }));
+  const liWeekdayRows: WeekdayRow[] = (accountRes.data ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend), conversions: num(r.one_click_leads) }));
 
   const merged = mergeDetections([
     buildLinkedInSignals({ entities }),
@@ -129,6 +131,7 @@ export async function POST(request: NextRequest) {
     buildBudgetConcentrationSignals(liBudgetEntities, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
     buildDemographicDriftSignals(driftRows, asOfDate),
     buildSpendVelocitySignals(liSpendDaily, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
+    buildWeekdayEfficiencySignals(liWeekdayRows, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
   ]);
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "LinkedIn");
 

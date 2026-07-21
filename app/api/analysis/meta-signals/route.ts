@@ -13,6 +13,7 @@ import { buildMetaBreakdownSignals, metaBreakdownTypeLabel, type MetaBreakdownRo
 import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/signals/budget-concentration";
 import { buildDemographicDriftSignals, type DemographicDriftRow } from "@/lib/signals/demographic-drift";
 import { buildSpendVelocitySignals, type SpendDailyRow } from "@/lib/signals/spend-velocity";
+import { buildWeekdayEfficiencySignals, type WeekdayRow } from "@/lib/signals/weekday-efficiency";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { mergeDetections } from "@/lib/signals/types";
 import { shapeMetaAdInputs, shapeMetaLevelInputs, type MetaDailyRow } from "@/lib/analysis/channel-signal-data";
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
       .gte("date", since),
     supabase
       .from("meta_account_daily")
-      .select("date, spend")
+      .select("date, spend, conversions")
       .eq("client_id", clientId)
       .gte("date", since),
   ]);
@@ -122,6 +123,7 @@ export async function POST(request: NextRequest) {
         .map((r) => ({ dimension: metaBreakdownTypeLabel(String(r.breakdown_type)), value: String(r.breakdown_value), date: String(r.date), leads: num(r.conversions) }))
     : [];
   const metaSpendDaily: SpendDailyRow[] = (accountRes.data ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend) }));
+  const metaWeekdayRows: WeekdayRow[] = (accountRes.data ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend), conversions: num(r.conversions) }));
 
   const merged = mergeDetections([
     buildMetaCreativeSignals({ ads, levels }),
@@ -129,6 +131,7 @@ export async function POST(request: NextRequest) {
     buildBudgetConcentrationSignals(budgetEntities, { channelLabel: "Meta", idPrefix: "meta_budget" }),
     buildDemographicDriftSignals(metaDriftRows, asOfDate, { outcomeLabel: "conversie", idPrefix: "meta_demographic_drift" }),
     buildSpendVelocitySignals(metaSpendDaily, { channelLabel: "Meta", idPrefix: "meta_budget" }),
+    buildWeekdayEfficiencySignals(metaWeekdayRows, { channelLabel: "Meta", idPrefix: "meta_budget" }),
   ]);
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Meta");
 
