@@ -7,7 +7,7 @@
 // Bewust één geïsoleerde plek (zoals lib/feed/owners-mock.ts). Verschijnt alleen voor de demo-
 // klant; buiten demo geeft data-access "absent" en draait alles zonder GA4.
 
-import type { Ga4Config, Ga4DailyRow, Ga4Dataset, Ga4Channel } from "@/lib/ga4/types";
+import type { Ga4Config, Ga4DailyRow, Ga4Dataset, Ga4Channel, Ga4Device } from "@/lib/ga4/types";
 
 export const GA4_DEMO_CONFIG: Ga4Config = {
   propertyId: "properties/demo-greentech",
@@ -28,7 +28,16 @@ const CHANNELS: { channel: Ga4Channel; sessions: number; rate: number }[] = [
   { channel: "other", sessions: 160, rate: 0.02 },      // organisch/direct
 ];
 
-// Bouwt ~35 dagen: een gezonde basislijn en de laatste 4 dagen met key events op ~0 (de break).
+// Device-verdeling met een bewuste mobiele CRO-penalty: mobiel is het grootste deel van het
+// verkeer maar converteert de helft van desktop (mobiele landingpage/formulier blijft achter).
+const DEVICES: { device: Ga4Device; frac: number; mult: number }[] = [
+  { device: "desktop", frac: 0.55, mult: 1.3 },
+  { device: "mobile", frac: 0.40, mult: 0.5 },
+  { device: "tablet", frac: 0.05, mult: 1.0 },
+];
+
+// Bouwt ~35 dagen × kanaal × device: een gezonde basislijn en de laatste 4 dagen met key events
+// op ~0 (de break). De device-split draagt de mobiele CRO-kloof; de channel-som blijft kloppen.
 export function buildGa4DemoRows(now: Date = new Date()): Ga4DailyRow[] {
   const rnd = seeded(20260721);
   const rows: Ga4DailyRow[] = [];
@@ -40,24 +49,27 @@ export function buildGa4DemoRows(now: Date = new Date()): Ga4DailyRow[] {
     const date = d.toISOString().slice(0, 10);
     const broken = i < BREAK_DAYS;
     for (const c of CHANNELS) {
-      const jitter = 0.85 + rnd() * 0.3;
-      const sessions = Math.round(c.sessions * jitter);
-      const engaged = Math.round(sessions * (0.55 + rnd() * 0.1));
-      const baseKey = sessions * c.rate;
-      const keyEvents = broken ? 0 : Math.round(baseKey);
-      // Funnel: bovenkant blijft doorlopen, alleen de laatste stap (form_submit) valt weg.
-      const sessionStart = sessions;
-      const viewItem = Math.round(sessions * 0.7 * jitter);
-      const formStart = Math.round(sessions * (0.12 + rnd() * 0.03));
-      const formSubmit = broken ? 0 : Math.round(formStart * (0.45 + rnd() * 0.1));
-      rows.push({
-        date,
-        channel: c.channel,
-        sessions,
-        engagedSessions: engaged,
-        keyEvents,
-        funnel: { session_start: sessionStart, view_item: viewItem, form_start: formStart, form_submit: formSubmit },
-      });
+      for (const dv of DEVICES) {
+        const jitter = 0.85 + rnd() * 0.3;
+        const sessions = Math.round(c.sessions * dv.frac * jitter);
+        if (sessions <= 0) continue;
+        const engaged = Math.round(sessions * (0.55 + rnd() * 0.1));
+        const keyEvents = broken ? 0 : Math.round(sessions * c.rate * dv.mult);
+        // Funnel: bovenkant blijft doorlopen, alleen de laatste stap (form_submit) valt weg.
+        const sessionStart = sessions;
+        const viewItem = Math.round(sessions * 0.7 * jitter);
+        const formStart = Math.round(sessions * (0.12 + rnd() * 0.03));
+        const formSubmit = broken ? 0 : Math.round(formStart * (0.45 + rnd() * 0.1) * dv.mult);
+        rows.push({
+          date,
+          channel: c.channel,
+          device: dv.device,
+          sessions,
+          engagedSessions: engaged,
+          keyEvents,
+          funnel: { session_start: sessionStart, view_item: viewItem, form_start: formStart, form_submit: formSubmit },
+        });
+      }
     }
   }
   return rows;

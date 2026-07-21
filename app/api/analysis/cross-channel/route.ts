@@ -20,7 +20,8 @@ import type { ChannelKey } from "@/lib/cross-channel/lens-facts";
 import type { SignalStory } from "@/lib/signals/types";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
 import { fetchGa4Dataset, type Ga4SupabaseLike } from "@/lib/ga4/data-access";
-import { buildGa4CroSignals } from "@/lib/ga4/signals";
+import { buildGa4CroSignals, buildGa4DeviceCroSignals } from "@/lib/ga4/signals";
+import { mergeDetections } from "@/lib/signals/types";
 
 const SECTION = "cross_channel_v1";
 const SOP_TYPE = "cross_channel";
@@ -219,12 +220,13 @@ export async function POST(request: NextRequest) {
     try {
       const dataset = await fetchGa4Dataset(clientId, { supabase: supabase as unknown as Ga4SupabaseLike });
       if (dataset.availability === "absent") {
-        degradations.push(`GA4 CRO: ${dataset.limitations[0] ?? "geen GA4-data"}; de kanaal-conversie-kloof op de site is niet meetbaar`);
-        return { triggered: [] as SignalStory[], checked: ["ga4_cro_channel_gap"] };
+        degradations.push(`GA4 CRO: ${dataset.limitations[0] ?? "geen GA4-data"}; de kanaal- en device-conversie-kloof op de site zijn niet meetbaar`);
+        return { triggered: [] as SignalStory[], checked: ["ga4_cro_channel_gap", "ga4_cro_device_gap"] };
       }
-      return buildGa4CroSignals(dataset.rows);
+      // Twee CRO-detectoren: kanaal-conversie-kloof en device-kloof (mobiel vs desktop).
+      return mergeDetections([buildGa4CroSignals(dataset.rows), buildGa4DeviceCroSignals(dataset.rows)]);
     } catch {
-      return { triggered: [] as SignalStory[], checked: ["ga4_cro_channel_gap"] };
+      return { triggered: [] as SignalStory[], checked: ["ga4_cro_channel_gap", "ga4_cro_device_gap"] };
     }
   })();
 
