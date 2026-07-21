@@ -194,6 +194,30 @@ const clientNotes: Row[] = [
 ];
 const clientSyncStatus: Row[] = [{ client_id: CID, channel: "google_ads", status: "ok", last_sync_at: iso(), rows_synced: 1240 }];
 
+// blended_account_monthly: per kanaal per maand, zodat de cross-channel-analyse (signalen,
+// funnel, KPI-verhoudingen, pacing) in de demo end-to-end draait. Google uit de maandtotalen,
+// Meta/LinkedIn geaggregeerd uit hun dagreeksen naar dezelfde maand-sleutel (YYYY-MM-01).
+const blendedAccountMonthly: Row[] = (() => {
+  const out: Row[] = [];
+  for (const r of adsAccountMonthly) {
+    out.push({ client_id: CID, month: r.month, channel: "google_ads", impressions: r.impressions, clicks: r.clicks, spend: r.cost, conversions: r.conversions, leads: 0 });
+  }
+  const aggDaily = (daily: Row[], channel: string, map: (r: Row) => { imp: number; clk: number; spend: number; conv: number; leads: number }) => {
+    const byMonth = new Map<string, { imp: number; clk: number; spend: number; conv: number; leads: number }>();
+    for (const r of daily) {
+      const month = (r.date as string).slice(0, 7) + "-01";
+      const m = map(r);
+      const acc = byMonth.get(month) ?? { imp: 0, clk: 0, spend: 0, conv: 0, leads: 0 };
+      acc.imp += m.imp; acc.clk += m.clk; acc.spend += m.spend; acc.conv += m.conv; acc.leads += m.leads;
+      byMonth.set(month, acc);
+    }
+    for (const [month, a] of byMonth) out.push({ client_id: CID, month, channel, impressions: a.imp, clicks: a.clk, spend: a.spend, conversions: a.conv, leads: a.leads });
+  };
+  aggDaily(metaAccountDaily, "meta_ads", (r) => ({ imp: r.impressions as number, clk: r.link_clicks as number, spend: r.spend as number, conv: r.conversions as number, leads: 0 }));
+  aggDaily(linkedinAccountDaily, "linkedin_ads", (r) => ({ imp: r.impressions as number, clk: r.clicks as number, spend: r.spend as number, conv: r.external_website_conversions as number, leads: r.one_click_leads as number }));
+  return out;
+})();
+
 // Bestanden: precies één set standaardmappen (geen dubbelen) + een paar voorbeeldbestanden,
 // zodat het tabblad Bestanden er in de demo netjes en volledig uitziet.
 const clientFolders: Row[] = ["SOP's", "Briefings", "Sprintplanning", "Rapportages", "Overig"].map((name, i) => ({
@@ -235,5 +259,6 @@ export function demoRows(): Record<string, Row[]> {
     client_sync_status: clientSyncStatus,
     client_folders: clientFolders,
     client_files: clientFiles,
+    blended_account_monthly: blendedAccountMonthly,
   };
 }
