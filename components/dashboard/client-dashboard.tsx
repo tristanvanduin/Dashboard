@@ -39,6 +39,7 @@ import { DgmView } from "./dgm-view";
 import { MetaView } from "./meta-view";
 import { LinkedInView } from "./linkedin-view";
 import { CrossChannelView } from "./cross-channel-view";
+import { CampaignsPerChannel } from "./campaigns-per-channel";
 import { BrandingView } from "./branding-view";
 import { EventSettings } from "./event-settings";
 import { GeoCloneSettingsPanel } from "./geo-clone-settings";
@@ -343,7 +344,9 @@ export function ClientDashboard({ client }: { client: Client }) {
               )}
               {channel === "meta" && <MetaView clientId={client.id} geoClone={geoClone} />}
               {channel === "linkedin" && <LinkedInView clientId={client.id} geoClone={geoClone} />}
-              {channel === "blended" && <CrossChannelView clientId={client.id} />}
+              {/* Alle kanalen op de Campagnes-tab: welke campagnes draaien per kanaal (niet de
+                  blended maandgrafiek — die hoort bij Prognose/Overzicht). */}
+              {channel === "blended" && <CampaignsPerChannel clientId={client.id} geoClone={geoClone} />}
             </div>
           )}
 
