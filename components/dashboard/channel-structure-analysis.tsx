@@ -10,6 +10,7 @@ import { buildDemographicDriftSignals, type DemographicDriftRow } from "@/lib/si
 import { buildSpendVelocitySignals, type SpendDailyRow } from "@/lib/signals/spend-velocity";
 import { buildWeekdayEfficiencySignals, type WeekdayRow } from "@/lib/signals/weekday-efficiency";
 import { buildTrackingGapSignals, type TrackingGapRow } from "@/lib/signals/tracking-gap";
+import { buildHourlyDaypartingSignals, type HourlyRow } from "@/lib/signals/hourly-dayparting";
 import { mergeDetections, type SignalStory, type SignalCertainty } from "@/lib/signals/types";
 
 // Deterministische structuur-analyse per kanaal, client-side (leest de dag-tabellen direct en
@@ -66,11 +67,12 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
     async function load() {
       const asOfDate = new Date().toISOString().slice(0, 10);
       if (channel === "meta") {
-        const [{ data, error }, { data: campDaily }, { data: campNames }, { data: acctDaily }] = await Promise.all([
+        const [{ data, error }, { data: campDaily }, { data: campNames }, { data: acctDaily }, { data: hourly }] = await Promise.all([
           sb!.from("meta_breakdown_daily").select("breakdown_type, breakdown_value, date, impressions, link_clicks, spend, conversions").eq("client_id", clientId).gte("date", since),
           sb!.from("meta_campaign_daily").select("entity_id, spend, conversions").eq("client_id", clientId).gte("date", since),
           sb!.from("meta_campaigns").select("campaign_id, name").eq("client_id", clientId),
           sb!.from("meta_account_daily").select("date, spend, conversions, link_clicks").eq("client_id", clientId).gte("date", since),
+          sb!.from("meta_hourly_performance").select("hour, spend, conversions").eq("client_id", clientId).gte("date", since),
         ]);
         if (error) { if (!cancelled) { setError(error.message); setStories([]); } return; }
         const rows: MetaBreakdownRow[] = (data ?? []).map((r) => ({
@@ -86,6 +88,7 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
         const spendDaily: SpendDailyRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend) }));
         const weekdayRows: WeekdayRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), spend: num(r.spend), conversions: num(r.conversions) }));
         const trackingRows: TrackingGapRow[] = (acctDaily ?? []).map((r) => ({ date: String(r.date), clicks: num(r.link_clicks), conversions: num(r.conversions) }));
+        const hourlyRows: HourlyRow[] = (hourly ?? []).map((r) => ({ hour: num(r.hour), spend: num(r.spend), conversions: num(r.conversions) }));
         const merged = mergeDetections([
           buildMetaBreakdownSignals(rows),
           buildBudgetConcentrationSignals(entities, { channelLabel: "Meta", idPrefix: "meta_budget" }),
@@ -93,6 +96,7 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
           buildSpendVelocitySignals(spendDaily, { channelLabel: "Meta", idPrefix: "meta_budget" }),
           buildWeekdayEfficiencySignals(weekdayRows, { channelLabel: "Meta", idPrefix: "meta_budget" }),
           buildTrackingGapSignals(trackingRows, { channelLabel: "Meta", idPrefix: "meta_budget" }),
+          buildHourlyDaypartingSignals(hourlyRows, { channelLabel: "Meta", idPrefix: "meta_budget" }),
         ]);
         if (!cancelled) setStories(merged.triggered);
       } else {
@@ -149,7 +153,7 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
       scale: list.filter((s) => s.id.includes("_scale_")),
       risk: list.filter((s) => s.id.includes("_concentratie_risico")),
       drift: list.filter((s) => s.id.includes("demographic_drift_")),
-      pacing: list.filter((s) => s.id.includes("_spend_versnelling") || s.id.includes("_spend_inzakking") || s.id.includes("_weekday_duur")),
+      pacing: list.filter((s) => s.id.includes("_spend_versnelling") || s.id.includes("_spend_inzakking") || s.id.includes("_weekday_duur") || s.id.includes("_dayparting_duur")),
     };
   }, [stories]);
 

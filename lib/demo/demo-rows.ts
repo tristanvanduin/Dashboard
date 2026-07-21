@@ -207,6 +207,21 @@ const metaBreakdownDaily: Row[] = META_BD_SEGMENTS.flatMap((s) =>
   })
 );
 
+// meta_hourly_performance: de nacht (00–04u) converteert structureel slecht, zodat de
+// dagdeel-efficiëntie-detector in de demo een duur venster vindt.
+const metaHourlyPerformance: Row[] = Array.from({ length: 30 }, (_, d) =>
+  Array.from({ length: 24 }, (_, h) => {
+    const f = dayFactor(29 - d, h);
+    const nightPenalty = h < 4 ? 0.25 : 1;
+    const spend = 8 + (h >= 8 && h <= 20 ? 6 : 0);
+    return {
+      client_id: CID, date: dayISO(29 - d), hour: h,
+      impressions: Math.round(300 * f), link_clicks: Math.round(6 * f),
+      spend: Math.round(spend * f), conversions: spend * 0.04 * nightPenalty * f,
+    };
+  })
+).flat();
+
 const LI_CAMPAIGNS = [
   { urn: "urn:li:demo:1", name: "GRT | Leadgen NL" },
   { urn: "urn:li:demo:2", name: "GRT | Thought Leadership" },
@@ -350,6 +365,7 @@ export function demoRows(): Record<string, Row[]> {
     meta_campaigns: metaCampaigns,
     meta_campaign_daily: metaCampaignDaily,
     meta_breakdown_daily: metaBreakdownDaily,
+    meta_hourly_performance: metaHourlyPerformance,
     linkedin_campaigns: linkedinCampaigns,
     linkedin_creatives: linkedinCreatives,
     linkedin_creative_daily: linkedinCreativeDaily,
