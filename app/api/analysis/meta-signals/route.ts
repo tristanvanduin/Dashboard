@@ -10,6 +10,7 @@ import { NextRequest } from "next/server";
 import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { buildMetaCreativeSignals } from "@/lib/signals/meta-creative";
 import { buildMetaBreakdownSignals, type MetaBreakdownRow } from "@/lib/signals/meta-breakdown";
+import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/signals/budget-concentration";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { mergeDetections } from "@/lib/signals/types";
 import { shapeMetaAdInputs, shapeMetaLevelInputs, type MetaDailyRow } from "@/lib/analysis/channel-signal-data";
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
       .gte("date", since),
     supabase
       .from("meta_campaign_daily")
-      .select("entity_id, date, impressions, frequency")
+      .select("entity_id, date, impressions, frequency, spend, conversions")
       .eq("client_id", clientId)
       .gte("date", since),
     supabase.from("meta_ads").select("ad_id, name, campaign_id").eq("client_id", clientId),
@@ -96,9 +97,20 @@ export async function POST(request: NextRequest) {
     spend: num(r.spend),
     conversions: num(r.conversions),
   }));
+  // Budget-concentratie per campagne: stapelt het budget in één (onderpresterende) campagne?
+  const campTotals = new Map<string, { spend: number; conversions: number }>();
+  for (const r of (campRes.data ?? []) as Record<string, unknown>[]) {
+    const eid = String(r.entity_id);
+    const t = campTotals.get(eid) ?? { spend: 0, conversions: 0 };
+    t.spend += num(r.spend); t.conversions += num(r.conversions);
+    campTotals.set(eid, t);
+  }
+  const budgetEntities: BudgetEntityRow[] = [...campTotals.entries()].map(([eid, t]) => ({ name: campName.get(eid) ?? eid, spend: t.spend, conversions: t.conversions }));
+
   const merged = mergeDetections([
     buildMetaCreativeSignals({ ads, levels }),
     buildMetaBreakdownSignals(breakdownRows),
+    buildBudgetConcentrationSignals(budgetEntities, { channelLabel: "Meta", idPrefix: "meta_budget" }),
   ]);
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Meta");
 

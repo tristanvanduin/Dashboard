@@ -9,6 +9,7 @@ import { NextRequest } from "next/server";
 import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { buildLinkedInSignals } from "@/lib/signals/linkedin-signals";
 import { buildLinkedInDemographicSignals, type LinkedInDemographicRow } from "@/lib/signals/linkedin-demographic";
+import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/signals/budget-concentration";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { shapeLinkedInInputs, type LinkedInDailyRow } from "@/lib/analysis/channel-signal-data";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
@@ -96,9 +97,20 @@ export async function POST(request: NextRequest) {
     })
     .filter((r): r is LinkedInDemographicRow => r !== null);
 
+  // Budget-concentratie per campagne: hangt het gros van het budget aan één (dure) campagne?
+  const liTotals = new Map<string, { spend: number; conversions: number }>();
+  for (const r of (dailyRes.data ?? []) as Record<string, unknown>[]) {
+    const urn = String(r.entity_urn);
+    const t = liTotals.get(urn) ?? { spend: 0, conversions: 0 };
+    t.spend += num(r.spend); t.conversions += num(r.one_click_leads);
+    liTotals.set(urn, t);
+  }
+  const liBudgetEntities: BudgetEntityRow[] = [...liTotals.entries()].map(([urn, t]) => ({ name: names.get(urn) ?? urn, spend: t.spend, conversions: t.conversions }));
+
   const merged = mergeDetections([
     buildLinkedInSignals({ entities }),
     buildLinkedInDemographicSignals(demoRows),
+    buildBudgetConcentrationSignals(liBudgetEntities, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
   ]);
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "LinkedIn");
 
