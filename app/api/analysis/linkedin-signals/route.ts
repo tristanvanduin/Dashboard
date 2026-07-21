@@ -8,9 +8,20 @@
 import { NextRequest } from "next/server";
 import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { buildLinkedInSignals } from "@/lib/signals/linkedin-signals";
+import { buildLinkedInDemographicSignals, type LinkedInDemographicRow } from "@/lib/signals/linkedin-demographic";
 import { renderSignalSection } from "@/lib/signals/render-section";
 import { shapeLinkedInInputs, type LinkedInDailyRow } from "@/lib/analysis/channel-signal-data";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
+import { mergeDetections } from "@/lib/signals/types";
+
+// LinkedIn-pivot → leesbare demografische dimensie voor de segment-efficiëntie-detector.
+const PIVOT_TO_DIM: Record<string, string> = {
+  MEMBER_JOB_FUNCTION: "functie",
+  MEMBER_SENIORITY: "seniority",
+  MEMBER_INDUSTRY: "industrie",
+  MEMBER_COMPANY_SIZE: "bedrijfsgrootte",
+  COMPANY_SIZE: "bedrijfsgrootte",
+};
 
 const SECTION = "linkedin_signals_v1";
 const SOP_TYPE = "linkedin_signals";
@@ -49,13 +60,19 @@ export async function POST(request: NextRequest) {
   }
 
   const since = new Date(Date.now() - FETCH_DAYS * 86_400_000).toISOString().slice(0, 10);
-  const [dailyRes, namesRes] = await Promise.all([
+  const [dailyRes, namesRes, demoRes, labelRes] = await Promise.all([
     supabase
       .from("linkedin_campaign_daily")
       .select("entity_urn, date, impressions, clicks, spend, one_click_leads, one_click_lead_form_opens, video_completions, video_starts")
       .eq("client_id", clientId)
       .gte("date", since),
     supabase.from("linkedin_campaigns").select("campaign_urn, name").eq("client_id", clientId),
+    supabase
+      .from("linkedin_demographic_daily")
+      .select("pivot_type, pivot_value_urn, spend, leads")
+      .eq("client_id", clientId)
+      .gte("date", since),
+    supabase.from("linkedin_urn_labels").select("urn, label"),
   ]);
 
   const rows = (dailyRes.data ?? []) as LinkedInDailyRow[];
@@ -65,7 +82,24 @@ export async function POST(request: NextRequest) {
 
   const names = new Map((namesRes.data ?? []).map((c) => [c.campaign_urn as string, (c.name as string) ?? (c.campaign_urn as string)]));
   const entities = shapeLinkedInInputs(rows, names);
-  const merged = buildLinkedInSignals({ entities });
+
+  // Structuur naast entiteit-signalen: kosten-efficiëntie per demografisch segment (CPL per
+  // functie/seniority/industrie/bedrijfsgrootte) — waste + schaalkansen.
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const urnLabel = new Map((labelRes.data ?? []).map((l) => [String(l.urn), String(l.label)]));
+  const demoRows: LinkedInDemographicRow[] = (demoRes.data ?? [])
+    .map((r) => {
+      const dimension = PIVOT_TO_DIM[String(r.pivot_type ?? "")];
+      const urn = String(r.pivot_value_urn ?? "");
+      if (!dimension || !urn || urn === "TOTAL") return null;
+      return { dimension, value: urnLabel.get(urn) ?? urn, spend: num(r.spend), leads: num(r.leads) };
+    })
+    .filter((r): r is LinkedInDemographicRow => r !== null);
+
+  const merged = mergeDetections([
+    buildLinkedInSignals({ entities }),
+    buildLinkedInDemographicSignals(demoRows),
+  ]);
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "LinkedIn");
 
   const output = section || `## LinkedIn-signalen\n\nGeen signalen getriggerd. Gecontroleerd: ${checkedIds.join(", ")}.`;

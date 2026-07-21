@@ -214,6 +214,29 @@ const linkedinCampaignDaily: Row[] = LI_CAMP_DEFS.flatMap((c) =>
   Array.from({ length: 150 }, (_, d) => { const f = dayFactor(149 - d, c.seed); return { client_id: CID, entity_urn: c.urn, date: dayISO(149 - d), impressions: Math.round(c.imp * f), clicks: Math.round(c.clk * f), spend: Math.round(c.spend * f), external_website_conversions: Math.round(f), one_click_leads: Math.max(0, Math.round(c.leads * f)) }; })
 );
 
+// linkedin_demographic_daily + labels: functie/seniority-segmenten met een dure verspiller
+// (Sales / Entry) en een efficiënte schaalkans (Marketing), zodat de demografie-segment-
+// efficiëntie-detector in de demo iets vindt.
+const LI_DEMO_SEGMENTS = [
+  { pivot: "MEMBER_JOB_FUNCTION", urn: "urn:li:function:8", label: "Engineering", spend: 20, leads: 0.8 },
+  { pivot: "MEMBER_JOB_FUNCTION", urn: "urn:li:function:25", label: "Sales", spend: 14, leads: 0.12 },
+  { pivot: "MEMBER_JOB_FUNCTION", urn: "urn:li:function:15", label: "Marketing", spend: 4, leads: 0.28 },
+  { pivot: "MEMBER_SENIORITY", urn: "urn:li:seniority:5", label: "Senior", spend: 22, leads: 0.9 },
+  { pivot: "MEMBER_SENIORITY", urn: "urn:li:seniority:1", label: "Entry", spend: 8, leads: 0.06 },
+];
+const linkedinDemographicDaily: Row[] = LI_DEMO_SEGMENTS.flatMap((s) =>
+  Array.from({ length: 40 }, (_, d) => {
+    const f = dayFactor(39 - d, s.label.length);
+    return {
+      client_id: CID, date: dayISO(39 - d), level: "account", entity_urn: "urn:li:account:demo",
+      pivot_type: s.pivot, pivot_value_urn: s.urn,
+      impressions: Math.round(1500 * f), clicks: Math.round(20 * f), spend: Math.round(s.spend * f),
+      leads: s.leads * f, conversions: s.leads * f * 0.3, coverage_pct: 0.8,
+    };
+  })
+);
+const linkedinUrnLabels: Row[] = LI_DEMO_SEGMENTS.map((s) => ({ urn: s.urn, label: s.label }));
+
 const clientNotes: Row[] = [
   { id: "demo-note-1", client_id: CID, title: "Beursweek", content: "Piek verwacht rond de beursweek — budgetten tijdig ophogen.", created_at: iso(), updated_at: iso() },
 ];
@@ -298,6 +321,8 @@ export function demoRows(): Record<string, Row[]> {
     linkedin_creative_daily: linkedinCreativeDaily,
     linkedin_account_daily: linkedinAccountDaily,
     linkedin_campaign_daily: linkedinCampaignDaily,
+    linkedin_demographic_daily: linkedinDemographicDaily,
+    linkedin_urn_labels: linkedinUrnLabels,
     client_notes: clientNotes,
     client_sync_status: clientSyncStatus,
     client_folders: clientFolders,
