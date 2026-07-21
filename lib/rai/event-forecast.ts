@@ -13,7 +13,7 @@ import {
 } from "./event-time-axis";
 import { MATERIAL_WINDOW_DIFF } from "./event-time-axis";
 
-export type ForecastMethod = "vorige_editie_sjabloon" | "tempo_extrapolatie" | "beurs_bereikt" | "geen_basis";
+export type ForecastMethod = "vorige_editie_sjabloon" | "vorige_editie_restvolume" | "tempo_extrapolatie" | "beurs_bereikt" | "geen_basis";
 export type ForecastConfidence = "hoog" | "gemiddeld" | "laag" | "geen_basis";
 
 export interface StreamForecast {
@@ -31,6 +31,14 @@ export interface StreamForecast {
 // Binnen dit deel van het venster (dicht bij de beurs) is de sjabloon-projectie het meest
 // betrouwbaar, want er rest weinig curve om te extrapoleren.
 const HIGH_CONFIDENCE_WINDOW_FRAC = 0.3;
+
+// Een event bouwt extreem exponentieel op: het gros van de conversies valt pas in de laatste
+// dagen/weken voor de beurs. Vroeg op die ramp staat er nog bijna niets, en dan is de
+// tempo-ratio (eindstand ÷ stand-op-D-x) een deling door een piepklein getal — die explodeert
+// bij ruis, en met een stand van 0 klapt de projectie juist naar 0. Pas als de vorige-editie-
+// curve op D-x minstens dit deel van zijn eindstand had opgebouwd, vertrouwen we de ratio;
+// daaronder ankeren we op het ABSOLUTE restvolume dat de vorige editie ná D-x nog opbouwde.
+const RAMP_SIGNAL_FRAC = 0.15;
 
 function round(v: number): number {
   return Math.round(v);
@@ -84,19 +92,43 @@ export function forecastStream(input: {
     const prevAtX = cumulativeThroughDaysOut(previous.points, previous.edition, x);
     const prevFinal = cumulativeThroughDaysOut(previous.points, previous.edition, 0);
 
-    if (windowComparable && prevAtX > 0 && prevFinal > 0) {
-      const ratio = prevFinal / prevAtX; // groei van D-x naar de beurs bij de vorige editie
-      const projectedFinal = round(currentCumulative * ratio);
-      // Vertrouwen: hoger naarmate we dichter bij de beurs zijn (minder curve te extrapoleren).
+    if (windowComparable && prevFinal > 0) {
+      const materializedFrac = prevAtX / prevFinal; // deel van de vorige-editie-curve dat op D-x al stond
+      const remainingPrev = Math.max(prevFinal - prevAtX, 0); // absoluut restvolume dat de vorige editie ná D-x nog opbouwde
       const fracLeft = curWindow && curWindow > 0 ? x / curWindow : 1;
-      const confidence: ForecastConfidence = fracLeft <= HIGH_CONFIDENCE_WINDOW_FRAC ? "hoog" : "gemiddeld";
-      return withTarget(projectedFinal, target, {
-        method: "vorige_editie_sjabloon",
-        daysToFairNow: x,
-        currentCumulative,
-        confidence,
-        note: `geprojecteerd met de curve van editie ${previous.edition.editionId} op gelijke dagen-uit`,
-      });
+      const pct = (v: number) => Math.round(v * 100);
+
+      // Genoeg curve opgebouwd om het tempo-signaal te vertrouwen: multiplicatief. De groei die
+      // de vorige editie van D-x naar de beurs maakte, toegepast op de huidige stand. Vangt de
+      // eindpiek zonder door een piepklein getal te delen.
+      if (prevAtX > 0 && materializedFrac >= RAMP_SIGNAL_FRAC) {
+        const ratio = prevFinal / prevAtX;
+        const projectedFinal = round(currentCumulative * ratio);
+        // Vertrouwen: hoger naarmate we dichter bij de beurs zijn (minder curve te extrapoleren).
+        const confidence: ForecastConfidence = fracLeft <= HIGH_CONFIDENCE_WINDOW_FRAC ? "hoog" : "gemiddeld";
+        return withTarget(projectedFinal, target, {
+          method: "vorige_editie_sjabloon",
+          daysToFairNow: x,
+          currentCumulative,
+          confidence,
+          note: `geprojecteerd met de curve van editie ${previous.edition.editionId} op gelijke dagen-uit (${pct(materializedFrac)}% ervan stond op D-${x})`,
+        });
+      }
+
+      // Vroeg op de ramp: de vorige editie had op D-x zelf nog nauwelijks opbouw, dus de
+      // tempo-ratio zou exploderen of (bij stand 0) naar nul klappen. We ankeren op het
+      // absolute restvolume dat de vorige editie ná D-x nog maakte, bovenop de huidige stand.
+      // Dit vangt de exponentiële eindpiek zonder instabiliteit, en is expliciet laag-zeker.
+      if (remainingPrev > 0) {
+        const projectedFinal = round(currentCumulative + remainingPrev);
+        return withTarget(projectedFinal, target, {
+          method: "vorige_editie_restvolume",
+          daysToFairNow: x,
+          currentCumulative,
+          confidence: "laag",
+          note: `vroeg op de ramp: pas ${pct(materializedFrac)}% van de curve van editie ${previous.edition.editionId} stond op D-${x}, dus geankerd op het absolute restvolume (${round(remainingPrev)}) dat die editie ná D-${x} nog opbouwde; wordt betrouwbaarder richting de beurs`,
+        });
+      }
     }
   }
 

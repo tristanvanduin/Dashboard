@@ -61,6 +61,35 @@ const naBeurs = forecastStream({ current: { edition: cur, points: [...curPoints,
 assert(naBeurs.method === "beurs_bereikt" && naBeurs.daysToFairNow! < 0, "na de beurs wordt niet geprojecteerd; de eindstand is bekend");
 assert(naBeurs.projectedFinal === naBeurs.currentCumulative, "na de beurs is de projectie gelijk aan de gerealiseerde eindstand");
 
+// ── Extreme exponentiële ramp: vroeg op de curve niet naar 0 klappen of exploderen ──
+// Vorige editie: 96% van het volume valt pas in de laatste 2 dagen (typisch beurs-gedrag).
+// Cum tot D-30 = 20; eind = 5000. Restvolume ná D-30 = 4980.
+const rampPrev: DailyPoint[] = [
+  { date: "2025-03-06", value: 20 },    // D-40
+  { date: "2025-03-31", value: 180 },   // D-15
+  { date: "2025-04-13", value: 4800 },  // D-2  -> eind = 5000
+];
+
+// (1) Stand 0 op D-30 (nog niets geconverteerd): projecteer NIET 0, maar het absolute
+// restvolume van de vorige editie bovenop de stand. asOfDate D-30 = 2026-03-16.
+const nul = forecastStream({ current: { edition: cur, points: [{ date: "2026-03-25", value: 30 }] }, previous: { edition: prev, points: rampPrev }, target: 5500, asOfDate: "2026-03-16" });
+assert(nul.daysToFairNow === 30 && nul.currentCumulative === 0, "op D-30 staat de huidige editie nog op 0 (piek moet nog komen)");
+assert(nul.method === "vorige_editie_restvolume" && nul.confidence === "laag", "vroeg op de ramp ankert hij op het restvolume, expliciet laag-zeker");
+assert(nul.projectedFinal === 4980, "projectie = stand (0) + restvolume vorige editie (4980), niet 0");
+assert(nul.projectedFinal !== 0, "de forecast klapt niet naar 0 door de exponentiële opbouw");
+
+// (2) Kleine stand op D-30: geen explosie via een ratio door een piepklein getal.
+// Multiplicatief zou 40 * (5000/20) = 10.000 geven; het restvolume-anker geeft 40 + 4980.
+const klein = forecastStream({ current: { edition: cur, points: [{ date: "2026-03-10", value: 40 }] }, previous: { edition: prev, points: rampPrev }, target: 5500, asOfDate: "2026-03-16" });
+assert(klein.currentCumulative === 40 && klein.method === "vorige_editie_restvolume", "kleine stand ver van de beurs valt op het restvolume-anker");
+assert(klein.projectedFinal === 5020, "projectie = 40 + 4980 = 5020, niet de geëxplodeerde 10.000");
+assert(klein.projectedFinal! < 6000, "de tempo-ratio explodeert niet door de deling door een piepklein getal");
+
+// (3) Zodra genoeg van de curve is opgebouwd (>= 15%), keert hij terug naar de multiplicatieve
+// sjabloon. Op D-2 stond bij rampPrev alles (materialized 100%): ratio 1, projectie ~ stand.
+const opRamp = forecastStream({ current: { edition: cur, points: [{ date: "2026-04-01", value: 300 }, { date: "2026-04-13", value: 4600 }] }, previous: { edition: prev, points: rampPrev }, target: 5500, asOfDate: "2026-04-13" });
+assert(opRamp.daysToFairNow === 2 && opRamp.method === "vorige_editie_sjabloon", "dicht bij de beurs, met de curve opgebouwd, weer de multiplicatieve sjabloon");
+
 // ── Geen basis ──
 const geen = forecastStream({ current: { edition: cur, points: [] }, previous: null, target: 5500, asOfDate: "2026-03-05" });
 assert(geen.method === "geen_basis" && geen.projectedFinal === null, "zonder verstreken opbouw geen projectie");
