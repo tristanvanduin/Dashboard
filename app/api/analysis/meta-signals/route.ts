@@ -9,7 +9,9 @@
 import { NextRequest } from "next/server";
 import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
 import { buildMetaCreativeSignals } from "@/lib/signals/meta-creative";
+import { buildMetaBreakdownSignals, type MetaBreakdownRow } from "@/lib/signals/meta-breakdown";
 import { renderSignalSection } from "@/lib/signals/render-section";
+import { mergeDetections } from "@/lib/signals/types";
 import { shapeMetaAdInputs, shapeMetaLevelInputs, type MetaDailyRow } from "@/lib/analysis/channel-signal-data";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
 
@@ -50,7 +52,7 @@ export async function POST(request: NextRequest) {
   }
 
   const since = new Date(Date.now() - FETCH_DAYS * 86_400_000).toISOString().slice(0, 10);
-  const [adRes, campRes, adNamesRes, campNamesRes] = await Promise.all([
+  const [adRes, campRes, adNamesRes, campNamesRes, breakdownRes] = await Promise.all([
     supabase
       .from("meta_ad_daily")
       .select("entity_id, date, impressions, link_clicks, spend, conversions, conversion_value, frequency, hook_rate, hold_rate, quality_ranking, engagement_rate_ranking, conversion_rate_ranking")
@@ -63,6 +65,11 @@ export async function POST(request: NextRequest) {
       .gte("date", since),
     supabase.from("meta_ads").select("ad_id, name, campaign_id").eq("client_id", clientId),
     supabase.from("meta_campaigns").select("campaign_id, name").eq("client_id", clientId),
+    supabase
+      .from("meta_breakdown_daily")
+      .select("breakdown_type, breakdown_value, impressions, link_clicks, spend, conversions")
+      .eq("client_id", clientId)
+      .gte("date", since),
   ]);
 
   const adRows = (adRes.data ?? []) as MetaDailyRow[];
@@ -78,7 +85,21 @@ export async function POST(request: NextRequest) {
 
   const ads = shapeMetaAdInputs(adRows, adNames);
   const levels = shapeMetaLevelInputs((campRes.data ?? []) as MetaDailyRow[], levelNames);
-  const merged = buildMetaCreativeSignals({ ads, levels });
+  // Structuur naast creative: waar landt het budget binnen plaatsing/leeftijd/device en
+  // converteert dat mee (segment-waste + schaalkansen).
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const breakdownRows: MetaBreakdownRow[] = (breakdownRes.data ?? []).map((r) => ({
+    breakdownType: String(r.breakdown_type ?? ""),
+    breakdownValue: String(r.breakdown_value ?? ""),
+    impressions: num(r.impressions),
+    clicks: num(r.link_clicks),
+    spend: num(r.spend),
+    conversions: num(r.conversions),
+  }));
+  const merged = mergeDetections([
+    buildMetaCreativeSignals({ ads, levels }),
+    buildMetaBreakdownSignals(breakdownRows),
+  ]);
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Meta");
 
   const output = section || `## Meta-signalen\n\nGeen signalen getriggerd. Gecontroleerd: ${checkedIds.join(", ")}.`;
