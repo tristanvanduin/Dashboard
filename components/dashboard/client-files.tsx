@@ -88,6 +88,9 @@ async function parseSprintCSV(file: File, clientId: string, sb: SupabaseClient) 
       const weekStr = row["Meten vanaf week:"] || row["Week"] || "";
       const weekNum = parseInt(weekStr.replace(/#N\/A/g, "")) || null;
 
+      // Losse hypotheses zijn voorstellen: ze horen eerst in de goedkeuringswachtrij bij
+      // Bevindingen (status pending), en gaan pas naar de sprintplanning zodra ze zijn
+      // geaccepteerd. Daarom hier géén accepted-status en géén placeholder-sprinttaak.
       const { data: hyp } = await sb
         .from("sprint_hypotheses")
         .insert({
@@ -95,28 +98,17 @@ async function parseSprintCSV(file: File, clientId: string, sb: SupabaseClient) 
           hypothesis: hypText,
           measurement_metric: metrics,
           timeframe: timeframe,
-          status: "accepted",
-          accepted_at: new Date().toISOString(),
+          status: "pending",
+          source: "sprint_import",
         })
         .select("id").single();
 
       if (!hyp) continue;
-
-      // Create a placeholder task so the hypothesis shows in the sprint board
-      await sb.from("sprint_items").insert({
-        client_id: clientId,
-        hypothesis_id: hyp.id,
-        week_number: weekNum,
-        task: `Uitvoeren: ${hypText.slice(0, 80)}${hypText.length > 80 ? "..." : ""}`,
-        status: "todo",
-        owner: "Ranking Masters",
-        metrics: metrics,
-        review_timeframe: timeframe,
-      });
+      void weekNum; // week is pas relevant zodra het voorstel geaccepteerd is
       count++;
     }
 
-    console.log(`[parseSprintCSV] Imported ${count} hypotheses (hypotheses-only format)`);
+    console.log(`[parseSprintCSV] Imported ${count} hypotheses as pending proposals (hypotheses-only format)`);
     return;
   }
 
