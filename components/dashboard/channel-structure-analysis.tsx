@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { buildMetaBreakdownSignals, type MetaBreakdownRow } from "@/lib/signals/meta-breakdown";
 import { buildLinkedInDemographicSignals, type LinkedInDemographicRow } from "@/lib/signals/linkedin-demographic";
 import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/signals/budget-concentration";
+import { buildDemographicDriftSignals, type DemographicDriftRow } from "@/lib/signals/demographic-drift";
 import { mergeDetections, type SignalStory, type SignalCertainty } from "@/lib/signals/types";
 
 // Deterministische structuur-analyse per kanaal, client-side (leest de dag-tabellen direct en
@@ -81,26 +82,35 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
         if (!cancelled) setStories(merged.triggered);
       } else {
         const [{ data: demo, error: demoErr }, { data: labels }, { data: campDaily }, { data: campNames }] = await Promise.all([
-          sb!.from("linkedin_demographic_daily").select("pivot_type, pivot_value_urn, spend, leads").eq("client_id", clientId).gte("date", since),
+          sb!.from("linkedin_demographic_daily").select("pivot_type, pivot_value_urn, date, spend, leads").eq("client_id", clientId).gte("date", since),
           sb!.from("linkedin_urn_labels").select("urn, label"),
           sb!.from("linkedin_campaign_daily").select("entity_urn, spend, one_click_leads").eq("client_id", clientId).gte("date", since),
           sb!.from("linkedin_campaigns").select("campaign_urn, name").eq("client_id", clientId),
         ]);
         if (demoErr) { if (!cancelled) { setError(demoErr.message); setStories([]); } return; }
         const urnLabel = new Map((labels ?? []).map((l) => [String(l.urn), String(l.label)]));
+        const dimOf = (r: Record<string, unknown>) => PIVOT_TO_DIM[String(r.pivot_type ?? "")];
+        const valOf = (r: Record<string, unknown>) => urnLabel.get(String(r.pivot_value_urn ?? "")) ?? String(r.pivot_value_urn ?? "");
         const rows: LinkedInDemographicRow[] = (demo ?? [])
           .map((r) => {
-            const dimension = PIVOT_TO_DIM[String(r.pivot_type ?? "")];
-            const urn = String(r.pivot_value_urn ?? "");
+            const dimension = dimOf(r); const urn = String(r.pivot_value_urn ?? "");
             if (!dimension || !urn || urn === "TOTAL") return null;
-            return { dimension, value: urnLabel.get(urn) ?? urn, spend: num(r.spend), leads: num(r.leads) };
+            return { dimension, value: valOf(r), spend: num(r.spend), leads: num(r.leads) };
           })
           .filter((r): r is LinkedInDemographicRow => r !== null);
+        const driftRows: DemographicDriftRow[] = (demo ?? [])
+          .map((r) => {
+            const dimension = dimOf(r); const urn = String(r.pivot_value_urn ?? "");
+            if (!dimension || !urn || urn === "TOTAL" || !r.date) return null;
+            return { dimension, value: valOf(r), date: String(r.date), leads: num(r.leads) };
+          })
+          .filter((r): r is DemographicDriftRow => r !== null);
         const names = new Map((campNames ?? []).map((c) => [String(c.campaign_urn), String(c.name ?? c.campaign_urn)]));
         const entities = toBudgetEntities((campDaily ?? []) as Record<string, unknown>[], "entity_urn", "one_click_leads", names);
         const merged = mergeDetections([
           buildLinkedInDemographicSignals(rows),
           buildBudgetConcentrationSignals(entities, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
+          buildDemographicDriftSignals(driftRows, new Date().toISOString().slice(0, 10)),
         ]);
         if (!cancelled) setStories(merged.triggered);
       }
@@ -109,12 +119,13 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
     return () => { cancelled = true; };
   }, [clientId, channel]);
 
-  const { waste, scale, risk } = useMemo(() => {
+  const { waste, scale, risk, drift } = useMemo(() => {
     const list = stories ?? [];
     return {
       waste: list.filter((s) => s.id.includes("_waste_") || s.id.includes("_concentratie_onderpresteerder")),
       scale: list.filter((s) => s.id.includes("_scale_")),
       risk: list.filter((s) => s.id.includes("_concentratie_risico")),
+      drift: list.filter((s) => s.id.includes("demographic_drift_")),
     };
   }, [stories]);
 
@@ -154,6 +165,12 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
               <div>
                 <p className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide mb-2 flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" /> Schaalkansen</p>
                 <div className="space-y-2">{scale.map((s) => <StoryRow key={s.id} s={s} />)}</div>
+              </div>
+            )}
+            {drift.length > 0 && (
+              <div>
+                <p className="text-[11px] font-semibold text-blue-600 uppercase tracking-wide mb-2 flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" /> Mix-verschuiving over de tijd</p>
+                <div className="space-y-2">{drift.map((s) => <StoryRow key={s.id} s={s} />)}</div>
               </div>
             )}
           </div>
