@@ -45,7 +45,7 @@ import { computeDataReliability, type DataReliabilityAssessment } from "@/lib/an
 import { checkStepDataAvailability } from "@/lib/analysis/data-availability";
 import type { StepDataAvailability } from "@/lib/analysis/data-availability";
 import { checkDataFreshness } from "@/lib/sync/freshness";
-import { canonicalizeFindings, clusterFindings, type CoverageDimension, type NormalizedFinding } from "@/lib/analysis/canonicalize";
+import { canonicalizeFindings, clusterFindings, type CoverageDimension, type NormalizedFinding, type IssueCluster } from "@/lib/analysis/canonicalize";
 import { enforceSopCoverage } from "@/lib/analysis/coverage-enforcer";
 import { buildStructuredMonthlyOutput, type ParsedStepOutput } from "@/lib/analysis/monthly-structured";
 import {
@@ -759,11 +759,102 @@ interface AssessedSearchTermRow {
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
+// M2/L2-parity: de synthese- en kwaliteitslaag die het Google-pad al draaide, nu gedeeld voor
+// Meta en LinkedIn — structured_monthly_v2 (thread-synthese → hypotheses-workflow), het
+// acceptance-rapport en de quality-gate. Meta/LinkedIn draaien (nog) zonder checkpoints en zonder
+// per-stap step-validations, dus die gaan als leeg mee; de coverage-, aanbevelings- en taak-
+// criteria van het acceptance-rapport blijven volledig van kracht, net als bij Google.
+async function finalizeChannelMonthlySynthesis(opts: {
+  supabase: SupabaseClient;
+  adapter: ChannelAdapter;
+  clientId: string;
+  periodStart: string;
+  periodEnd: string;
+  analysisDate: string;
+  parsedSteps: ParsedStepOutput[];
+  allSteps: StepResult[];
+  canonical: ReturnType<typeof canonicalizeFindings>;
+  curatedFindings: NormalizedFinding[];
+  curatedClusters: IssueCluster[];
+  conclusionText: string;
+}) {
+  const { supabase, adapter, clientId, periodStart, periodEnd, analysisDate, parsedSteps, allSteps, canonical, curatedFindings, curatedClusters, conclusionText } = opts;
+  const model = allSteps[0]?.model ?? "unknown";
+  const enforcedCoverage = enforceSopCoverage(curatedClusters, {});
+  const structured = buildStructuredMonthlyOutput({
+    parsedSteps,
+    findings: curatedFindings,
+    clusters: curatedClusters,
+    coverage: enforcedCoverage.coverage,
+    conclusionText,
+  });
+  const narrativeSteps: StepResult[] = parsedSteps.map((step) => {
+    const raw = allSteps.find((s) => s.stepNumber === step.stepNumber);
+    return {
+      stepNumber: step.stepNumber, stepName: step.stepName, output: step.narrative,
+      model: raw?.model ?? model, tokensUsed: raw?.tokensUsed ?? 0, saved: false,
+      latencyMs: raw?.latencyMs ?? 0, retries: raw?.retries ?? 0,
+    };
+  });
+  const acceptanceReport = validateMonthlyAcceptance({
+    stepCount: adapter.stepCount,
+    narrativeSteps,
+    recommendations: structured.recommendations,
+    tasks: structured.tasks,
+    finalSop: { recommendations: structured.final_sop.recommendations, tasks: structured.final_sop.tasks },
+    coverage: structured.coverage,
+    findings: curatedFindings,
+    checkpointsRun: 0,
+    stepValidations: [],
+  });
+  const qualityGate = buildMonthlyQualityGate({ stepValidations: [], acceptance: acceptanceReport });
+
+  const save = (section: string, output: string) => saveAnalysisOutputSection({
+    supabase,
+    row: { client_id: clientId, sop_type: adapter.sopTypeKey, analysis_date: analysisDate, period_start: periodStart, period_end: periodEnd, section, output, model_used: model, tokens_used: 0, step_number: 0, step_name: section },
+  });
+
+  await save("quality_gate_monthly_v2", JSON.stringify({
+    analysis_date: analysisDate,
+    passed: qualityGate.passed, state: qualityGate.state,
+    invalid_steps: qualityGate.invalid_steps, blocking_reasons: qualityGate.blocking_reasons,
+    acceptance: acceptanceReport, step_validations: [],
+    candidate_counts: { findings: canonical.findings.length, curated_findings: curatedFindings.length, recommendations: structured.recommendations.length, tasks: structured.tasks.length, threads: structured.threads.length },
+  }));
+  await save("full", sanitizeOutput(structured.deliverable_markdown));
+  await save("structured_monthly_v2", JSON.stringify({
+    stats: { ...canonical.stats, curated_count: curatedFindings.length },
+    findings: structured.findings,
+    final_sop: structured.final_sop,
+    operating_detail: structured.operating_detail,
+    display_findings: structured.display_findings,
+    canonical_metric_snapshot: structured.canonical_metric_snapshot,
+    threads: structured.threads,
+    clusters: structured.clusters.map((c) => ({ cluster_id: c.cluster_id, issue_cluster: c.issue_cluster, canonical_entity_name: c.canonical_entity_name, display_label: c.display_label, canonical_metric: c.canonical_metric, related_finding_ids: c.related_finding_ids, dominant_severity: c.dominant_severity, dominant_confidence: c.dominant_confidence, root_cause_summary: c.root_cause_summary, evidence_summary: c.evidence_summary, actionability: c.actionability, coverage_dimensions: c.coverage_dimensions })),
+    coverage: enforcedCoverage.coverage,
+    recommendations: structured.recommendations,
+    tasks: structured.tasks,
+    executive_markdown: structured.executive_markdown,
+    deliverable_markdown: structured.deliverable_markdown,
+    coverage_markdown: structured.coverage_markdown,
+    appendix_markdown: structured.appendix_markdown,
+    checkpoints: [],
+    parsed_steps: parsedSteps.map((s) => ({ stepNumber: s.stepNumber, stepName: s.stepName, narrative: s.narrative, log_entries: s.log_entries, findings: s.findings, status: s.status, actions: s.actions, step_conclusion: s.step_conclusion })),
+    step_validations: [],
+    acceptance: acceptanceReport,
+    quality_gate: qualityGate,
+    success_next_month: structured.success_next_month,
+    what_is_not_the_problem: structured.what_is_not_the_problem,
+  }));
+
+  return { structured, acceptanceReport, qualityGate };
+}
+
 // M2 route-wiring: het additieve Meta-pad. Draait de 11-staps Meta SOP op de gedeelde route-helpers
 // met de Meta-datalaag, en laat het Google-pad volledig ongemoeid via de vroege branch in POST.
 // LIVE-ONGETEST: de Supabase-fetch in buildMetaAnalysisData en de end-to-end run zijn pas met echte
-// Meta-data te verifieren. Bewust nog zonder checkpoints, acceptance-rapport en de volledige
-// structured_monthly_v2-aggregatie; dat zijn verfijningen op deze runnende kern.
+// Meta-data te verifieren. De synthese-laag (structured_monthly_v2 + acceptance + quality-gate)
+// draait nu via finalizeChannelMonthlySynthesis, gelijk aan Google.
 async function runMetaMonthlyAnalysis(
   supabase: SupabaseClient,
   adapter: ChannelAdapter,
@@ -863,6 +954,12 @@ async function runMetaMonthlyAnalysis(
   const curatedFindings = curateMonthlyStructuredFindings(canonical.findings);
   const curatedClusters = clusterFindings(curatedFindings);
 
+  const synthesis = await finalizeChannelMonthlySynthesis({
+    supabase, adapter, clientId, periodStart, periodEnd, analysisDate,
+    parsedSteps, allSteps, canonical, curatedFindings, curatedClusters,
+    conclusionText: conclusions.slice(-1)[0] ?? conclusions.join("\n\n"),
+  });
+
   return Response.json({
     ok: true,
     channel: adapter.channel,
@@ -870,6 +967,9 @@ async function runMetaMonthlyAnalysis(
     steps: parsedSteps.length,
     findings: curatedFindings.length,
     clusters: curatedClusters.length,
+    recommendations: synthesis.structured.recommendations.length,
+    tasks: synthesis.structured.tasks.length,
+    qualityGate: { passed: synthesis.qualityGate.passed, state: synthesis.qualityGate.state },
     tokensUsed: allSteps.reduce((sum, current) => sum + (current.tokensUsed || 0), 0),
   });
 }
@@ -877,8 +977,8 @@ async function runMetaMonthlyAnalysis(
 // L2 route-wiring: het additieve LinkedIn-pad. Draait de 9-staps LinkedIn SOP op de gedeelde
 // route-helpers met de LinkedIn-datalaag, en laat het Google- en Meta-pad ongemoeid via de vroege
 // branch. LIVE-ONGETEST: de Supabase-fetch in buildLinkedinAnalysisData en de end-to-end run zijn
-// pas met echte L1-data via MDP te verifieren. Bewust nog zonder checkpoints, acceptance en de
-// volledige synthese; dat zijn verfijningen op deze runnende kern, net als bij Meta.
+// pas met echte L1-data via MDP te verifieren. De synthese-laag (structured_monthly_v2 +
+// acceptance + quality-gate) draait nu via finalizeChannelMonthlySynthesis, gelijk aan Meta en Google.
 async function runLinkedinMonthlyAnalysis(
   supabase: SupabaseClient,
   adapter: ChannelAdapter,
@@ -982,6 +1082,12 @@ async function runLinkedinMonthlyAnalysis(
   const curatedFindings = curateMonthlyStructuredFindings(canonical.findings);
   const curatedClusters = clusterFindings(curatedFindings);
 
+  const synthesis = await finalizeChannelMonthlySynthesis({
+    supabase, adapter, clientId, periodStart, periodEnd, analysisDate,
+    parsedSteps, allSteps, canonical, curatedFindings, curatedClusters,
+    conclusionText: conclusions.slice(-1)[0] ?? conclusions.join("\n\n"),
+  });
+
   return Response.json({
     ok: true,
     channel: adapter.channel,
@@ -989,6 +1095,9 @@ async function runLinkedinMonthlyAnalysis(
     steps: parsedSteps.length,
     findings: curatedFindings.length,
     clusters: curatedClusters.length,
+    recommendations: synthesis.structured.recommendations.length,
+    tasks: synthesis.structured.tasks.length,
+    qualityGate: { passed: synthesis.qualityGate.passed, state: synthesis.qualityGate.state },
     tokensUsed: allSteps.reduce((sum, current) => sum + (current.tokensUsed || 0), 0),
   });
 }
