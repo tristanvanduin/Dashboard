@@ -40,6 +40,19 @@ export type RecommendationSource = z.infer<typeof RecommendationSourceEnum>;
 export const EvidenceLevelEnum = z.enum(["deterministic", "inferred", "hypothesis", "unknown"]);
 export type EvidenceLevel = z.infer<typeof EvidenceLevelEnum>;
 
+// Bewijs-basis van een stapconclusie: rust ze op advertentieplatformdata, op GA4, op een
+// combinatie, of op een schatting? Spiegelt lib/ga4/types EvidenceBasis en maakt de GA4-context-
+// instructie ("label ELKE conclusie") een gestructureerd, per-stap-conclusie-veld in de pipeline.
+export const EvidenceBasisEnum = z.enum(["platform", "ga4", "combined", "estimated"]);
+export type EvidenceBasis = z.infer<typeof EvidenceBasisEnum>;
+
+// Deterministische normalisatie: een ontbrekende/ongeldige waarde valt terug op "platform" — de
+// veilige basis die NOOIT ongefundeerd GA4 claimt (net als resolveEvidenceBasis in lib/ga4).
+export function normalizeEvidenceBasis(value: unknown): EvidenceBasis {
+  const parsed = EvidenceBasisEnum.safeParse(value);
+  return parsed.success ? parsed.data : "platform";
+}
+
 export const ConfidenceEnum = z.enum(["high", "medium", "low"]);
 export type Confidence = z.infer<typeof ConfidenceEnum>;
 
@@ -177,6 +190,10 @@ export const StepOutputSchema = z.object({
   status: StepStatusEnum,
   actions: z.array(StepActionSchema).max(2),
   step_conclusion: z.string().min(10),
+  // Bewijs-basis van de stapconclusie (optioneel voor backward-compatibility met bestaande,
+  // opgeslagen outputs). Ontbreekt ze → normalizeEvidenceBasis maakt er deterministisch "platform"
+  // van bij het parsen, zodat elke conclusie in de pipeline een expliciete basis draagt.
+  evidence_basis: EvidenceBasisEnum.optional(),
 });
 export type StepOutput = z.infer<typeof StepOutputSchema>;
 

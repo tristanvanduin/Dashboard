@@ -429,10 +429,12 @@ Retourneer UITSLUITEND valid JSON. Geen markdown, geen backticks, geen extra tek
       "verwachte_impact": "string (specifiek en meetbaar)"
     }
   ],
-  "step_conclusion": "string (1-2 zinnen samenvatting, wordt meegegeven aan de volgende stap)"
+  "step_conclusion": "string (1-2 zinnen samenvatting, wordt meegegeven aan de volgende stap)",
+  "evidence_basis": "platform|ga4|combined|estimated"
 }
 
 REGELS:
+- evidence_basis: waar RUST de stapconclusie op? "platform" = alleen advertentieplatformdata (Google/Meta/LinkedIn); "ga4" = alleen GA4/website-data; "combined" = beide samen; "estimated" = (deels) een schatting. Claim "ga4"/"combined" ALLEEN als er in deze stap daadwerkelijk GA4-CONTEXT is meegegeven; is die er niet, gebruik dan "platform". Bij twijfel of een geschat cijfer: "estimated".
 - top_3_findings: EXACT 3 items (niet meer, niet minder). Als er minder dan 3 materiële bevindingen zijn, vul aan met severity "positive" of "low".
 - actions: MAXIMAAL 2 items. Elke actie moet in 1 Google Ads sessie uitvoerbaar zijn.
 - log_entries: minimaal 1 per werkwijze (A, B, C) die je hebt uitgevoerd.

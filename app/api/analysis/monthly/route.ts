@@ -36,6 +36,7 @@ import {
   extractJson,
   FindingSchema,
   StepOutputSchema,
+  normalizeEvidenceBasis,
   type StepOutput,
   type Finding,
 } from "@/lib/schema/analysis-schema";
@@ -181,6 +182,7 @@ function buildFallbackStepOutput(rawOutput: string, stepNumber: number): ParsedS
     status: "NIET OP SCHEMA",
     actions: [],
     step_conclusion: "Parse error - handmatige review nodig.",
+    evidence_basis: "platform",
     rawOutput,
   };
 }
@@ -576,6 +578,7 @@ function coerceSafeStepPayload(candidate: unknown, stepNumber: number): StepOutp
     status: "NIET OP SCHEMA",
     actions,
     step_conclusion: stepConclusion,
+    evidence_basis: normalizeEvidenceBasis(candidate.evidence_basis),
   };
 }
 
@@ -623,6 +626,9 @@ function parseStructuredStepOutput(
 
   try {
     const normalized: StepOutput = salvaged.output;
+    // Bewijs-basis van deze stapconclusie, deterministisch genormaliseerd: gaf de stap niets
+    // (of iets ongeldigs) mee, dan wordt het "platform" — nooit een ongefundeerde GA4-claim.
+    const evidenceBasis = normalizeEvidenceBasis(normalized.evidence_basis);
     const parsedStep: ParsedStepOutput = {
       stepNumber: step.stepNumber,
       stepName: step.stepName,
@@ -637,6 +643,7 @@ function parseStructuredStepOutput(
         actie: sanitizeStepActionText(step.stepNumber, action.actie),
       })),
       step_conclusion: normalized.step_conclusion,
+      evidence_basis: evidenceBasis,
       rawOutput: step.output,
     };
     const reconciledStep = step.stepNumber === 12
@@ -649,6 +656,7 @@ function parseStructuredStepOutput(
       status: reconciledStep.status,
       actions: reconciledStep.actions,
       step_conclusion: reconciledStep.step_conclusion,
+      evidence_basis: reconciledStep.evidence_basis,
     };
     const scopedValidation = validateStepOutput(step.stepNumber, validationPayload, priorStepConclusion, { availability: stepAvailability, liveTerms, purityRules: channelValidation?.purityRules, logFormatSkeletons: channelValidation?.logFormatSkeletons });
     const claimWarnings = canonicalMap
@@ -723,6 +731,10 @@ function mergeParsedStepOutputs(parts: ParsedStepOutput[], stepNumber: number, s
   const stepConclusion = parts[parts.length - 1]?.step_conclusion
     || parts[0]?.step_conclusion
     || "Samengevoegde stapconclusie ontbreekt.";
+  // De basis volgt de laatste (definitieve) deelconclusie; deterministisch genormaliseerd.
+  const stepEvidenceBasis = normalizeEvidenceBasis(
+    parts[parts.length - 1]?.evidence_basis ?? parts[0]?.evidence_basis
+  );
 
   return {
     stepNumber,
@@ -738,6 +750,7 @@ function mergeParsedStepOutputs(parts: ParsedStepOutput[], stepNumber: number, s
     status: mergedStatus,
     actions: mergedActions,
     step_conclusion: stepConclusion,
+    evidence_basis: stepEvidenceBasis,
     rawOutput: JSON.stringify({
       narrative: parts.map((part) => part.narrative),
       log_entries: parts.flatMap((part) => part.log_entries),

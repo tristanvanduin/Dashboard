@@ -15,6 +15,7 @@ import {
 import type {
   ActionReadiness,
   Confidence,
+  EvidenceBasis,
   EvidenceLevel,
   Finding,
   Recommendation,
@@ -88,6 +89,9 @@ export interface ParsedStepOutput {
     verwachte_impact: string;
   }>;
   step_conclusion: string;
+  // Bewijs-basis van de stapconclusie (platform/ga4/combined/estimated). Deterministisch
+  // genormaliseerd bij het parsen; "platform" als de stap geen expliciete basis meegaf.
+  evidence_basis?: EvidenceBasis;
   rawOutput?: string;
   displayFindings?: Finding[];
 }
