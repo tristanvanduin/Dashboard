@@ -60,3 +60,68 @@ export function buildGa4TrackingSignals(rows: Ga4DailyRow[], opts: { idPrefix?: 
   }
   return { triggered: [], checked: [id] };
 }
+
+// ── CRO-signaal: kanaal-conversie-kloof ─────────────────────────────────────
+// Welk PAID-kanaal stuurt verkeer dat op de site materieel slechter converteert dan het site-
+// gemiddelde? Dat is een CRO-vraag (landingpage-fit per kanaal), niet een mediavraag — precies
+// wat de advertentieplatformdata niet ziet. Over één venster (geen prior nodig): key-event-ratio
+// per kanaal vs de blended site-ratio. "other" (organisch/direct) telt mee in het site-totaal
+// maar wordt zelf niet beoordeeld (geen paid landing-keuze). certainty "indicatie".
+
+export const GA4_CRO_WINDOW_DAYS = 28;
+export const GA4_CRO_MIN_CHANNEL_SESSIONS = 300;
+export const GA4_CRO_MIN_SITE_KEY_EVENTS = 12;
+export const GA4_CRO_GAP_RATIO = 0.7; // kanaalratio ≤ 70% van de site-ratio = materieel slechter
+
+const CRO_CHANNEL_LABEL: Record<string, string> = { google: "Google", meta: "Meta", linkedin: "LinkedIn" };
+
+export function buildGa4CroSignals(rows: Ga4DailyRow[], opts: { idPrefix?: string } = {}): DetectionResult {
+  const idPrefix = opts.idPrefix ?? "ga4";
+  const id = `${idPrefix}_cro_channel_gap`;
+  const now = Date.now();
+  const ageOf = (date: string): number => (now - Date.parse(date)) / 86_400_000;
+
+  let siteSessions = 0, siteKey = 0;
+  const byChannel = new Map<string, { sessions: number; key: number }>();
+  for (const r of rows) {
+    const age = ageOf(r.date);
+    if (!Number.isFinite(age) || age < 0 || age >= GA4_CRO_WINDOW_DAYS) continue;
+    siteSessions += r.sessions; siteKey += r.keyEvents;
+    const a = byChannel.get(r.channel) ?? { sessions: 0, key: 0 };
+    a.sessions += r.sessions; a.key += r.keyEvents;
+    byChannel.set(r.channel, a);
+  }
+
+  // Alleen oordelen als de site normaal materieel converteert.
+  if (siteSessions <= 0 || siteKey < GA4_CRO_MIN_SITE_KEY_EVENTS) return { triggered: [], checked: [id] };
+  const siteRate = siteKey / siteSessions;
+
+  const triggered: SignalStory[] = [];
+  // Deterministische volgorde (grootste kloof eerst) zodat de output stabiel is.
+  const paid = [...byChannel.entries()].filter(([ch]) => ch === "google" || ch === "meta" || ch === "linkedin");
+  const scored = paid
+    .filter(([, a]) => a.sessions >= GA4_CRO_MIN_CHANNEL_SESSIONS)
+    .map(([ch, a]) => ({ ch, a, rate: a.sessions > 0 ? a.key / a.sessions : 0 }))
+    .filter((x) => x.rate <= siteRate * GA4_CRO_GAP_RATIO)
+    .sort((x, y) => x.rate - y.rate);
+
+  for (const { ch, a, rate } of scored) {
+    const gapPct = Math.round((1 - rate / siteRate) * 100);
+    triggered.push({
+      id: `${idPrefix}_cro_gap_${ch}`,
+      category: "cross_channel",
+      scope: `${CRO_CHANNEL_LABEL[ch] ?? ch}-verkeer (GA4-website)`,
+      story: `${CRO_CHANNEL_LABEL[ch] ?? ch}-verkeer converteert op de site met ${round1(rate * 100)}% key-event-ratio, ${gapPct}% onder het site-gemiddelde (${round1(siteRate * 100)}%): het kanaal stuurt verkeer dat op de landingspagina slechter presteert dan gemiddeld.`,
+      actionDirection: `beoordeel de landingpage-fit voor ${CRO_CHANNEL_LABEL[ch] ?? ch} (boodschap-match, formulier, mobiel/desktop): dit is een CRO-kwestie op de site, niet per se een mediakwestie`,
+      certainty: "indicatie",
+      evidence: [
+        ev(`${ch} sessies (${GA4_CRO_WINDOW_DAYS}d)`, String(Math.round(a.sessions))),
+        ev(`${ch} key events`, String(Math.round(a.key))),
+        ev(`${ch} key-event-ratio`, `${round1(rate * 100)}%`),
+        ev("site-gemiddelde", `${round1(siteRate * 100)}%`),
+      ],
+    });
+  }
+
+  return { triggered, checked: [id] };
+}

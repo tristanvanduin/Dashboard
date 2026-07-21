@@ -23,7 +23,7 @@ function seeded(seed: number): () => number {
 
 const CHANNELS: { channel: Ga4Channel; sessions: number; rate: number }[] = [
   { channel: "google", sessions: 220, rate: 0.055 },   // paid search: het leeuwendeel
-  { channel: "meta", sessions: 90, rate: 0.03 },
+  { channel: "meta", sessions: 90, rate: 0.018 },       // converteert op de site ver onder gemiddeld (CRO-kloof)
   { channel: "linkedin", sessions: 40, rate: 0.045 },
   { channel: "other", sessions: 160, rate: 0.02 },      // organisch/direct
 ];
