@@ -214,15 +214,21 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
           campagnes die bij deze beurs horen (op basis van de campagnenaam).
         </div>
       )}
-      {/* KPI-kaarten */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {kpis.map((k) => (
-          <div key={k.label} className="bg-white rounded-xl border border-border px-4 py-3 shadow-sm">
-            <div className="text-[11px] text-muted-foreground">{k.label}</div>
-            <div className="text-lg font-semibold text-rm-gray mt-0.5">{k.value}</div>
-            {k.delta && <div className={`text-[10px] mt-0.5 ${k.delta.startsWith("+") ? "text-emerald-600" : "text-red-500"}`}>{k.delta} vs vorige 28d</div>}
-          </div>
-        ))}
+      {/* KPI-kaarten — in een getitelde kaart, zodat de opbouw rijmt met het Google-beursoverzicht. */}
+      <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-border flex items-center gap-2">
+          <BarChart3 className="w-4.5 h-4.5 text-rm-blue" />
+          <h3 className="text-sm font-semibold text-rm-gray">Kerncijfers (laatste 28 dagen)</h3>
+        </div>
+        <div className="px-4 py-4 grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {kpis.map((k) => (
+            <div key={k.label} className="rounded-lg border border-border bg-white px-4 py-3">
+              <div className="text-[11px] text-muted-foreground">{k.label}</div>
+              <div className="text-lg font-semibold text-rm-gray mt-0.5">{k.value}</div>
+              {k.delta && <div className={`text-[10px] mt-0.5 ${k.delta.startsWith("+") ? "text-emerald-600" : "text-red-500"}`}>{k.delta} vs vorige 28d</div>}
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Pacing */}

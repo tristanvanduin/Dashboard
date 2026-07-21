@@ -1,13 +1,14 @@
 "use client";
 
-import { Briefcase, AlertCircle, ArrowRight, CheckCircle2 } from "lucide-react";
+import { Briefcase } from "lucide-react";
 import { ChannelPerformance } from "./channel-performance";
 import { CreativePerformance } from "./creative-performance";
+import { ChannelViewHeader } from "./channel-view-header";
 import { isDemoMode } from "@/lib/demo/demo-mode";
 
-// LinkedIn Ads-tab. Het datamodel (linkedin_* tabellen) en de sync-laag staan klaar, maar er
-// is nog geen lees-API en nog geen gesyncte data. Dit tabblad toont de structuur en een
-// eerlijke lege staat, zodat het kanaal zichtbaar is zonder iets voor te wenden.
+// LinkedIn Ads-tab. Zelfde opbouw als de Google- en Meta-weergave via de gedeelde
+// ChannelViewHeader. Buiten demo is er nog geen gesyncte data; dan toont de header een eerlijke
+// lege staat en de prestatie-view eronder blijft leeg tot de sync draait.
 
 const SECTIONS = [
   "Campagnegroepen & campagnes",
@@ -21,41 +22,25 @@ export function LinkedInView({ clientId, geoClone }: { clientId: string; geoClon
   const demo = isDemoMode();
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-border flex items-center gap-2">
-          <Briefcase className="w-5 h-5 text-rm-blue" />
-          <h3 className="text-sm font-semibold text-rm-gray">LinkedIn Ads</h3>
-          {demo ? (
-            <span className="ml-auto flex items-center gap-1 text-[11px] text-emerald-600">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Gekoppeld (demo)
-            </span>
-          ) : (
-            <span className="ml-auto flex items-center gap-1 text-[11px] text-amber-600">
-              <AlertCircle className="w-3.5 h-3.5" /> Nog geen data
-            </span>
-          )}
-        </div>
-        <div className="px-5 py-4">
-          {!demo && (
+      <ChannelViewHeader
+        icon={<Briefcase className="w-5 h-5 text-rm-blue" />}
+        title="LinkedIn Ads"
+        geoClone={geoClone}
+        status={demo ? { kind: "connected", label: "Gekoppeld (demo)" } : { kind: "warning", label: "Nog geen data" }}
+        blurb={
+          geoClone
+            ? <>Cijfers hieronder zijn <strong>her-geaggregeerd per beurs</strong> ({geoClone}) uit de campagnes waarvan de naam bij deze beurs hoort. Ratio&apos;s (CPL, CTR) komen uit de venstertotalen, niet uit dag-gemiddelden.</>
+            : <>Account-brede LinkedIn-cijfers: kerncijfers over de laatste 28 dagen, pacing tegen vorige maand, maandverloop en de campagnes.</>
+        }
+        delivers={SECTIONS}
+        analysesHint={<>De LinkedIn-analyses (maand-SOP, signalen) draai je via het tabblad <strong>Analyses</strong> → LinkedIn.</>}
+        warning={!demo ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
             Het LinkedIn-datamodel en de sync-laag staan klaar. Zodra de LinkedIn-koppeling live is en de
-            sync draait, vult dit tabblad met onderstaande secties. (Client: {clientId})
+            sync draait, vult dit tabblad met onderstaande secties.
           </div>
-          )}
-          <p className="text-[11px] text-muted-foreground mt-3 mb-1">Dit kanaal levert:</p>
-          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {SECTIONS.map((s) => (
-              <li key={s} className="text-[12px] text-rm-gray flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-rm-blue/40" /> {s}
-              </li>
-            ))}
-          </ul>
-          <p className="text-[11px] text-muted-foreground mt-4 flex items-center gap-1.5">
-            <ArrowRight className="w-3.5 h-3.5" />
-            De LinkedIn-analyses (maand-SOP, signalen) draai je via het tabblad <strong>Analyses</strong> → LinkedIn.
-          </p>
-        </div>
-      </div>
+        ) : undefined}
+      />
 
       {/* Volwaardige prestatie-view: KPI's, pacing, grafiek, maand- en campagnetabel. */}
       <ChannelPerformance clientId={clientId} channel="linkedin" geoClone={geoClone} />
