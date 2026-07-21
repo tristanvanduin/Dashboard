@@ -170,6 +170,9 @@ const META_CAMPAIGNS = [
   { id: "demo-mcamp-rt", name: "GRT | Retargeting NL", imp: 800, clk: 30, spend: 44, conv: 6, seed: 4 },
   // Dominante, slecht converterende campagne: voedt de budget-concentratie-detector.
   { id: "demo-mcamp-pro", name: "GRT | Prospecting breed", imp: 6000, clk: 55, spend: 210, conv: 3, seed: 6 },
+  // Ook op de andere beurzen actief, zodat Meta binnen GRN/GRA niet leeg is.
+  { id: "demo-mcamp-grn", name: "GRN | Awareness NA", imp: 1800, clk: 34, spend: 82, conv: 5, seed: 7 },
+  { id: "demo-mcamp-gra", name: "GRA | Retargeting US", imp: 1100, clk: 26, spend: 54, conv: 4, seed: 8 },
 ];
 const metaCampaigns: Row[] = META_CAMPAIGNS.map((c) => ({ client_id: CID, campaign_id: c.id, name: c.name, status: "ACTIVE" }));
 const metaCampaignDaily: Row[] = META_CAMPAIGNS.flatMap((c) =>
@@ -226,6 +229,9 @@ const LI_CAMPAIGNS = [
   { urn: "urn:li:demo:1", name: "GRT | Leadgen NL" },
   { urn: "urn:li:demo:2", name: "GRT | Thought Leadership" },
   { urn: "urn:li:demo:3", name: "GRT | Brede awareness" },
+  // Ook op de andere beurzen actief, zodat LinkedIn binnen GRN/GRA niet leeg is.
+  { urn: "urn:li:demo:4", name: "GRN | Leadgen Canada" },
+  { urn: "urn:li:demo:5", name: "GRA | Thought Leadership US" },
 ];
 const linkedinCampaigns: Row[] = LI_CAMPAIGNS.map((c) => ({ client_id: CID, campaign_urn: c.urn, name: c.name, status: "ACTIVE", objective_type: "LEAD_GENERATION" }));
 const linkedinCreatives: Row[] = [
@@ -252,6 +258,8 @@ const LI_CAMP_DEFS = [
   { urn: "urn:li:demo:1", imp: 900, clk: 16, spend: 40, leads: 6, seed: 0 },
   { urn: "urn:li:demo:2", imp: 1200, clk: 20, spend: 30, leads: 5, seed: 2 },
   { urn: "urn:li:demo:3", imp: 4000, clk: 30, spend: 120, leads: 2, seed: 4 },
+  { urn: "urn:li:demo:4", imp: 1100, clk: 18, spend: 48, leads: 7, seed: 6 },
+  { urn: "urn:li:demo:5", imp: 1500, clk: 22, spend: 36, leads: 4, seed: 8 },
 ];
 const linkedinCampaignDaily: Row[] = LI_CAMP_DEFS.flatMap((c) =>
   Array.from({ length: 150 }, (_, d) => { const f = dayFactor(149 - d, c.seed); return { client_id: CID, entity_urn: c.urn, date: dayISO(149 - d), impressions: Math.round(c.imp * f), clicks: Math.round(c.clk * f), spend: Math.round(c.spend * f), external_website_conversions: Math.round(f), one_click_leads: Math.max(0, Math.round(c.leads * f)) }; })
