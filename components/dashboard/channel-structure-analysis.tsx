@@ -5,7 +5,8 @@ import { Loader2, Layers, TrendingUp, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { buildMetaBreakdownSignals, type MetaBreakdownRow } from "@/lib/signals/meta-breakdown";
 import { buildLinkedInDemographicSignals, type LinkedInDemographicRow } from "@/lib/signals/linkedin-demographic";
-import type { SignalStory, SignalCertainty } from "@/lib/signals/types";
+import { buildBudgetConcentrationSignals, type BudgetEntityRow } from "@/lib/signals/budget-concentration";
+import { mergeDetections, type SignalStory, type SignalCertainty } from "@/lib/signals/types";
 
 // Deterministische structuur-analyse per kanaal, client-side (leest de dag-tabellen direct en
 // draait de pure detector) — zodat de segment-efficiëntie zichtbaar is zonder API-key of
@@ -46,24 +47,44 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
     setStories(null); setError(null);
     const since = new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10);
 
+    // Aggregeer campagne-totalen tot budget-entiteiten (voor de concentratie-detector).
+    const toBudgetEntities = (rows: Record<string, unknown>[], idField: string, convField: string, names: Map<string, string>): BudgetEntityRow[] => {
+      const totals = new Map<string, { spend: number; conversions: number }>();
+      for (const r of rows) {
+        const id = String(r[idField]);
+        const t = totals.get(id) ?? { spend: 0, conversions: 0 };
+        t.spend += num(r.spend); t.conversions += num(r[convField]);
+        totals.set(id, t);
+      }
+      return [...totals.entries()].map(([id, t]) => ({ name: names.get(id) ?? id, spend: t.spend, conversions: t.conversions }));
+    };
+
     async function load() {
       if (channel === "meta") {
-        const { data, error } = await sb!
-          .from("meta_breakdown_daily")
-          .select("breakdown_type, breakdown_value, impressions, link_clicks, spend, conversions")
-          .eq("client_id", clientId)
-          .gte("date", since);
+        const [{ data, error }, { data: campDaily }, { data: campNames }] = await Promise.all([
+          sb!.from("meta_breakdown_daily").select("breakdown_type, breakdown_value, impressions, link_clicks, spend, conversions").eq("client_id", clientId).gte("date", since),
+          sb!.from("meta_campaign_daily").select("entity_id, spend, conversions").eq("client_id", clientId).gte("date", since),
+          sb!.from("meta_campaigns").select("campaign_id, name").eq("client_id", clientId),
+        ]);
         if (error) { if (!cancelled) { setError(error.message); setStories([]); } return; }
         const rows: MetaBreakdownRow[] = (data ?? []).map((r) => ({
           breakdownType: String(r.breakdown_type ?? ""),
           breakdownValue: String(r.breakdown_value ?? ""),
           impressions: num(r.impressions), clicks: num(r.link_clicks), spend: num(r.spend), conversions: num(r.conversions),
         }));
-        if (!cancelled) setStories(buildMetaBreakdownSignals(rows).triggered);
+        const names = new Map((campNames ?? []).map((c) => [String(c.campaign_id), String(c.name ?? c.campaign_id)]));
+        const entities = toBudgetEntities((campDaily ?? []) as Record<string, unknown>[], "entity_id", "conversions", names);
+        const merged = mergeDetections([
+          buildMetaBreakdownSignals(rows),
+          buildBudgetConcentrationSignals(entities, { channelLabel: "Meta", idPrefix: "meta_budget" }),
+        ]);
+        if (!cancelled) setStories(merged.triggered);
       } else {
-        const [{ data: demo, error: demoErr }, { data: labels }] = await Promise.all([
+        const [{ data: demo, error: demoErr }, { data: labels }, { data: campDaily }, { data: campNames }] = await Promise.all([
           sb!.from("linkedin_demographic_daily").select("pivot_type, pivot_value_urn, spend, leads").eq("client_id", clientId).gte("date", since),
           sb!.from("linkedin_urn_labels").select("urn, label"),
+          sb!.from("linkedin_campaign_daily").select("entity_urn, spend, one_click_leads").eq("client_id", clientId).gte("date", since),
+          sb!.from("linkedin_campaigns").select("campaign_urn, name").eq("client_id", clientId),
         ]);
         if (demoErr) { if (!cancelled) { setError(demoErr.message); setStories([]); } return; }
         const urnLabel = new Map((labels ?? []).map((l) => [String(l.urn), String(l.label)]));
@@ -75,18 +96,25 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
             return { dimension, value: urnLabel.get(urn) ?? urn, spend: num(r.spend), leads: num(r.leads) };
           })
           .filter((r): r is LinkedInDemographicRow => r !== null);
-        if (!cancelled) setStories(buildLinkedInDemographicSignals(rows).triggered);
+        const names = new Map((campNames ?? []).map((c) => [String(c.campaign_urn), String(c.name ?? c.campaign_urn)]));
+        const entities = toBudgetEntities((campDaily ?? []) as Record<string, unknown>[], "entity_urn", "one_click_leads", names);
+        const merged = mergeDetections([
+          buildLinkedInDemographicSignals(rows),
+          buildBudgetConcentrationSignals(entities, { channelLabel: "LinkedIn", idPrefix: "linkedin_budget" }),
+        ]);
+        if (!cancelled) setStories(merged.triggered);
       }
     }
     load().catch((e) => { if (!cancelled) { setError(String(e)); setStories([]); } });
     return () => { cancelled = true; };
   }, [clientId, channel]);
 
-  const { waste, scale } = useMemo(() => {
+  const { waste, scale, risk } = useMemo(() => {
     const list = stories ?? [];
     return {
-      waste: list.filter((s) => s.id.includes("_waste_")),
+      waste: list.filter((s) => s.id.includes("_waste_") || s.id.includes("_concentratie_onderpresteerder")),
       scale: list.filter((s) => s.id.includes("_scale_")),
+      risk: list.filter((s) => s.id.includes("_concentratie_risico")),
     };
   }, [stories]);
 
@@ -114,6 +142,12 @@ export function ChannelStructureAnalysis({ clientId, channel }: { clientId: stri
               <div>
                 <p className="text-[11px] font-semibold text-red-600 uppercase tracking-wide mb-2 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Verspilling</p>
                 <div className="space-y-2">{waste.map((s) => <StoryRow key={s.id} s={s} />)}</div>
+              </div>
+            )}
+            {risk.length > 0 && (
+              <div>
+                <p className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide mb-2 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Concentratierisico</p>
+                <div className="space-y-2">{risk.map((s) => <StoryRow key={s.id} s={s} />)}</div>
               </div>
             )}
             {scale.length > 0 && (
