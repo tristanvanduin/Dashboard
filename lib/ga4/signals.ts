@@ -182,3 +182,73 @@ export function buildGa4DeviceCroSignals(rows: Ga4DailyRow[], opts: { idPrefix?:
   };
   return { triggered: [story], checked: [id] };
 }
+
+// ── CRO-signaal: landingpage-kloof ──────────────────────────────────────────
+// Welke LANDINGSPAGINA vangt paid verkeer op dat op de site materieel slechter converteert dan de
+// paid-site als geheel? Dat is de scherpst-actioneerbare CRO-vraag (boodschap-match, formulier,
+// snelheid op díe pagina) en precies wat de advertentieplatformdata niet ziet — de mediakant kan
+// gezond zijn terwijl de pagina zelf lekt. Over één venster, alleen paid, alleen rijen mét
+// landingPage; de paid-site-ratio is de benchmark. certainty "indicatie".
+
+export const GA4_LP_WINDOW_DAYS = 28;
+export const GA4_LP_MIN_PAGE_SESSIONS = 300;      // per landingspagina
+export const GA4_LP_MIN_SITE_KEY_EVENTS = 12;     // de paid-site moet normaal materieel converteren
+export const GA4_LP_GAP_RATIO = 0.7;              // pagina ≤ 70% van de paid-site-ratio = materieel slechter
+
+// Stabiel, leesbaar id-fragment uit een pad: alleen [a-z0-9], rest → "_". Zo blijft het verhaal-id
+// deterministisch over runs (geen hash-flakiness) en herkenbaar in de wachtrij.
+function slugifyPath(path: string): string {
+  const s = path.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return s.length > 0 ? s : "page";
+}
+
+export function buildGa4LandingPageCroSignals(rows: Ga4DailyRow[], opts: { idPrefix?: string } = {}): DetectionResult {
+  const idPrefix = opts.idPrefix ?? "ga4";
+  const id = `${idPrefix}_cro_landingpage_gap`;
+  const now = Date.now();
+  const ageOf = (date: string): number => (now - Date.parse(date)) / 86_400_000;
+
+  let siteSessions = 0, siteKey = 0;
+  const byPage = new Map<string, { sessions: number; key: number }>();
+  for (const r of rows) {
+    if (!r.landingPage || !PAID_CHANNELS.has(r.channel)) continue; // alleen paid, alleen met landingpage
+    const age = ageOf(r.date);
+    if (!Number.isFinite(age) || age < 0 || age >= GA4_LP_WINDOW_DAYS) continue;
+    siteSessions += r.sessions; siteKey += r.keyEvents;
+    const a = byPage.get(r.landingPage) ?? { sessions: 0, key: 0 };
+    a.sessions += r.sessions; a.key += r.keyEvents;
+    byPage.set(r.landingPage, a);
+  }
+
+  // Alleen oordelen als de paid-site normaal materieel converteert én er iets te vergelijken valt
+  // (minstens twee pagina's — met één pagina ís die pagina het site-gemiddelde).
+  if (siteSessions <= 0 || siteKey < GA4_LP_MIN_SITE_KEY_EVENTS || byPage.size < 2) return { triggered: [], checked: [id] };
+  const siteRate = siteKey / siteSessions;
+
+  // Deterministische volgorde (grootste kloof eerst) zodat de output stabiel is.
+  const scored = [...byPage.entries()]
+    .filter(([, a]) => a.sessions >= GA4_LP_MIN_PAGE_SESSIONS)
+    .map(([page, a]) => ({ page, a, rate: a.sessions > 0 ? a.key / a.sessions : 0 }))
+    .filter((x) => x.rate <= siteRate * GA4_LP_GAP_RATIO)
+    .sort((x, y) => x.rate - y.rate || x.page.localeCompare(y.page));
+
+  const triggered: SignalStory[] = scored.map(({ page, a, rate }) => {
+    const gapPct = Math.round((1 - rate / siteRate) * 100);
+    return {
+      id: `${idPrefix}_cro_lp_${slugifyPath(page)}`,
+      category: "cross_channel",
+      scope: `Landingspagina ${page} (paid, GA4-website)`,
+      story: `De landingspagina ${page} vangt paid verkeer op dat met ${round1(rate * 100)}% key-event-ratio converteert, ${gapPct}% onder het paid-site-gemiddelde (${round1(siteRate * 100)}%): deze pagina lekt materieel meer dan de rest.`,
+      actionDirection: `beoordeel de fit van ${page} (boodschap-match met de advertentie, formulier, laadsnelheid, mobiele weergave) — dit is een CRO-kwestie op de pagina zelf, niet per se een mediakwestie`,
+      certainty: "indicatie",
+      evidence: [
+        ev(`sessies op de pagina (${GA4_LP_WINDOW_DAYS}d)`, String(Math.round(a.sessions))),
+        ev("key events op de pagina", String(Math.round(a.key))),
+        ev("key-event-ratio pagina", `${round1(rate * 100)}%`),
+        ev("paid-site-gemiddelde", `${round1(siteRate * 100)}%`),
+      ],
+    };
+  });
+
+  return { triggered, checked: [id] };
+}

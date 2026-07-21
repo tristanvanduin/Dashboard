@@ -32,6 +32,7 @@ export interface Ga4DailyRow {
   date: string; // YYYY-MM-DD
   channel: Ga4Channel;
   device?: Ga4Device; // optioneel: aanwezig zodra de device-breakdown is opgehaald
+  landingPage?: string; // optioneel: landingspagina-pad, aanwezig zodra de landingpage-breakdown is opgehaald
   sessions: number;
   engagedSessions: number;
   keyEvents: number;

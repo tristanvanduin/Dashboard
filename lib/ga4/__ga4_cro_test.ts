@@ -4,7 +4,7 @@ export {};
 // stil bij een gezonde mix, en "other" (organisch/direct) wordt nooit zelf beoordeeld.
 // Draaien: npx tsx lib/ga4/__ga4_cro_test.ts
 
-import { buildGa4CroSignals, buildGa4DeviceCroSignals, GA4_CRO_WINDOW_DAYS, GA4_DEV_WINDOW_DAYS } from "./signals";
+import { buildGa4CroSignals, buildGa4DeviceCroSignals, buildGa4LandingPageCroSignals, GA4_CRO_WINDOW_DAYS, GA4_DEV_WINDOW_DAYS, GA4_LP_WINDOW_DAYS } from "./signals";
 import { buildGa4DemoRows } from "@/lib/demo/ga4-demo";
 import type { Ga4DailyRow, Ga4Channel, Ga4Device } from "./types";
 
@@ -111,6 +111,71 @@ console.log("\n8. Demodata: de mobiele CRO-kloof is zichtbaar in demo-greentech"
 {
   const r = buildGa4DeviceCroSignals(buildGa4DemoRows(new Date()));
   check("demo triggert de mobiele device-kloof", r.triggered.some((s) => s.id === "ga4_cro_device_mobile"), `ids=${r.triggered.map((s) => s.id).join(",")}`);
+}
+
+// ── Landingpage-kloof ───────────────────────────────────────────────────────
+function flatLp(spec: { channel: Ga4Channel; landingPage: string; sessions: number; rate: number }[]): Ga4DailyRow[] {
+  const out: Ga4DailyRow[] = [];
+  for (let a = 0; a < GA4_LP_WINDOW_DAYS; a++) {
+    for (const s of spec) {
+      out.push({ date: day(a), channel: s.channel, landingPage: s.landingPage, sessions: s.sessions, engagedSessions: Math.round(s.sessions * 0.6), keyEvents: Math.round(s.sessions * s.rate), funnel: {} });
+    }
+  }
+  return out;
+}
+
+console.log("\n9. Eén landingpage converteert ver onder de paid-site → alarm alleen voor die pagina");
+{
+  const r = buildGa4LandingPageCroSignals(flatLp([
+    { channel: "google", landingPage: "/aanmelden", sessions: 120, rate: 0.02 },
+    { channel: "google", landingPage: "/oplossingen", sessions: 120, rate: 0.06 },
+    { channel: "meta", landingPage: "/oplossingen", sessions: 40, rate: 0.055 },
+  ]));
+  check("precies één landingpage-signaal", r.triggered.length === 1, `triggered=${r.triggered.length}`);
+  check("het gaat over /aanmelden", r.triggered[0]?.id === "ga4_cro_lp_aanmelden", r.triggered[0]?.id);
+  check("categorie = cross_channel", r.triggered[0]?.category === "cross_channel");
+  check("certainty = indicatie", r.triggered[0]?.certainty === "indicatie");
+}
+
+console.log("\n10. Pagina's die gelijkmatig converteren → stil");
+{
+  const r = buildGa4LandingPageCroSignals(flatLp([
+    { channel: "google", landingPage: "/aanmelden", sessions: 120, rate: 0.04 },
+    { channel: "google", landingPage: "/oplossingen", sessions: 120, rate: 0.042 },
+  ]));
+  check("geen alarm bij gelijkmatige pagina's", r.triggered.length === 0, `triggered=${r.triggered.length}`);
+}
+
+console.log("\n11. Slechts één landingpage → geen oordeel (die pagina ís het gemiddelde)");
+{
+  const r = buildGa4LandingPageCroSignals(flatLp([
+    { channel: "google", landingPage: "/aanmelden", sessions: 400, rate: 0.001 },
+  ]));
+  check("geen landingpage-signaal met één pagina", r.triggered.length === 0, `triggered=${r.triggered.length}`);
+}
+
+console.log("\n12. 'other' (organisch) op een zwakke pagina → wordt niet beoordeeld (alleen paid)");
+{
+  const r = buildGa4LandingPageCroSignals(flatLp([
+    { channel: "google", landingPage: "/oplossingen", sessions: 400, rate: 0.05 },
+    { channel: "other", landingPage: "/blog", sessions: 400, rate: 0.001 },
+  ]));
+  check("other-pagina triggert geen paid-landingpage-signaal", r.triggered.every((s) => !s.id.includes("blog")), `ids=${r.triggered.map((s) => s.id).join(",")}`);
+}
+
+console.log("\n13. Rijen zonder landingPage → geen landingpage-oordeel (backward-compatible)");
+{
+  const r = buildGa4LandingPageCroSignals([
+    { date: day(1), channel: "google", sessions: 500, engagedSessions: 300, keyEvents: 2, funnel: {} },
+    { date: day(2), channel: "meta", sessions: 500, engagedSessions: 300, keyEvents: 25, funnel: {} },
+  ]);
+  check("geen landingpage-signaal zonder landingPage-veld", r.triggered.length === 0);
+}
+
+console.log("\n14. Demodata: de landingpage-CRO-kloof is zichtbaar in demo-greentech");
+{
+  const r = buildGa4LandingPageCroSignals(buildGa4DemoRows(new Date()));
+  check("demo triggert de /aanmelden-landingpage-kloof", r.triggered.some((s) => s.id === "ga4_cro_lp_aanmelden"), `ids=${r.triggered.map((s) => s.id).join(",")}`);
 }
 
 console.log(`\nRESULTAAT: ${passed} geslaagd, ${failed} gefaald\n`);
