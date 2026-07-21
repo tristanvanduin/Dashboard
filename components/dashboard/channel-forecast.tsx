@@ -5,27 +5,31 @@ import { Loader2, TrendingUp, Info } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { forecastChannelMetric, type MonthValue } from "@/lib/analysis/channel-forecast";
 import { MonthlyTrendChart } from "./monthly-trend-chart";
+import { resolveChannelConversionConfig, sumSelectedConversions, conversionSourcesFor, type ChannelConversionConfig, type ChannelConversionChannel } from "@/lib/analysis/channel-conversion-config";
 
 // Run-rate-prognose voor Meta/LinkedIn: lopende maand op tempo + volgende maand via een lichte
-// trend. Eerlijk over de beperking (geen meerjarige historie, dus geen seizoenscorrectie).
+// trend. Eerlijk over de beperking (geen meerjarige historie, dus geen seizoenscorrectie). De
+// conversie is de som van de per kanaal geselecteerde conversievelden (conversie-selectie).
 
 type ChannelKind = "meta" | "linkedin" | "blended";
 
-interface Source { table: string; convField: string }
+interface Source { table: string; channelKey: ChannelConversionChannel }
 interface Cfg { sources: Source[]; convLabel: string; label: string }
 const CFG: Record<ChannelKind, Cfg> = {
-  meta: { sources: [{ table: "meta_account_daily", convField: "conversions" }], convLabel: "Conversies", label: "Meta" },
-  linkedin: { sources: [{ table: "linkedin_account_daily", convField: "one_click_leads" }], convLabel: "Leads", label: "LinkedIn" },
+  meta: { sources: [{ table: "meta_account_daily", channelKey: "meta_ads" }], convLabel: "Conversies", label: "Meta" },
+  linkedin: { sources: [{ table: "linkedin_account_daily", channelKey: "linkedin_ads" }], convLabel: "Leads", label: "LinkedIn" },
   // Alleen de jonge kanalen samen (beide run-rate, geen YoY). Google blijft apart met zijn
   // kalender-YoY-model — dat mengen zou de tempo-indicatie valse precisie geven.
   blended: {
     sources: [
-      { table: "meta_account_daily", convField: "conversions" },
-      { table: "linkedin_account_daily", convField: "one_click_leads" },
+      { table: "meta_account_daily", channelKey: "meta_ads" },
+      { table: "linkedin_account_daily", channelKey: "linkedin_ads" },
     ],
     convLabel: "Acties (conv. + leads)", label: "Meta + LinkedIn",
   },
 };
+
+const convFieldsFor = (ck: ChannelConversionChannel): string[] => conversionSourcesFor(ck).map((s) => s.field);
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const eur = (v: number | null): string => (v == null || !Number.isFinite(v) ? "—" : new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(v));
@@ -42,19 +46,24 @@ export function ChannelForecast({ clientId, channel }: { clientId: string; chann
     let cancelled = false;
     setRows(null); setError(null);
     const since = new Date(Date.now() - 220 * 86_400_000).toISOString().slice(0, 10);
-    // Elke bron normaliseert naar {date, spend, conv} via een alias; bij meerdere bronnen
-    // (blended) worden de dagrijen samengevoegd en later per maand opgeteld.
-    Promise.all(
-      cfg.sources.map((s) =>
-        sb.from(s.table).select(`date, spend, conv:${s.convField}`).eq("client_id", clientId).gte("date", since)
-      )
-    ).then((results) => {
+    // Elke bron levert zijn ruwe conversievelden; de conversie is de som van de geselecteerde
+    // velden voor dat kanaal. Bij meerdere bronnen (blended) worden de dagrijen samengevoegd.
+    Promise.all([
+      ...cfg.sources.map((s) =>
+        sb.from(s.table).select(`date, spend, ${convFieldsFor(s.channelKey).join(", ")}`).eq("client_id", clientId).gte("date", since)
+      ),
+      sb.from("client_settings").select("channel_conversion_config").eq("client_id", clientId).maybeSingle(),
+    ]).then((results) => {
       if (cancelled) return;
-      const firstError = results.find((r) => r.error)?.error;
+      const sourceResults = results.slice(0, cfg.sources.length);
+      const settingsRes = results[results.length - 1];
+      const firstError = sourceResults.find((r) => r.error)?.error;
       if (firstError) { setError(firstError.message); setRows([]); return; }
-      const merged = results.flatMap(({ data }) =>
-        ((data ?? []) as unknown as Record<string, unknown>[]).map((r) => ({ date: String(r.date), spend: num(r.spend), conv: num(r.conv) }))
-      );
+      const config = resolveChannelConversionConfig((settingsRes.data as { channel_conversion_config?: unknown } | null)?.channel_conversion_config as Partial<ChannelConversionConfig> | null);
+      const merged = sourceResults.flatMap((res, i) => {
+        const ck = cfg.sources[i].channelKey;
+        return ((res.data ?? []) as unknown as Record<string, unknown>[]).map((r) => ({ date: String(r.date), spend: num(r.spend), conv: sumSelectedConversions(r, ck, config) }));
+      });
       setRows(merged);
     });
     return () => { cancelled = true; };

@@ -5,6 +5,7 @@ import { Loader2, Calendar, TrendingUp, Gauge, BarChart3 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { supabase } from "@/lib/supabase";
 import { matchGeoCloneByCampaignName } from "@/lib/rai/geo-clone-catalog";
+import { resolveChannelConversionConfig, sumSelectedConversions, selectedConversionLabels, type ChannelConversionConfig, type ChannelConversionChannel } from "@/lib/analysis/channel-conversion-config";
 
 // Volwaardige prestatie-view voor Meta en LinkedIn: dezelfde bouwstenen als Google
 // (KPI-kaarten, pacing, maandtabel, grafiek, campagnetabel), gevoed uit de dag-tabellen van
@@ -20,8 +21,8 @@ interface DailyRow {
   impressions: number;
   clicks: number;
   spend: number;
-  conversions: number;
-  leads: number;
+  // Ruwe conversievelden per naam; welke meetellen bepaalt de conversie-selectie per kanaal.
+  convFields: Record<string, number>;
 }
 
 interface ChannelConfig {
@@ -30,10 +31,9 @@ interface ChannelConfig {
   nameTable: string;
   nameId: string;
   entityField: string;
+  channelKey: ChannelConversionChannel;
   select: string;
   map: (r: Record<string, unknown>) => Omit<DailyRow, "entity"> & { entity: string };
-  convLabel: string; // "Conversies" of "Leads"
-  useLeads: boolean;
 }
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -45,10 +45,9 @@ const CONFIG: Record<ChannelKind, ChannelConfig> = {
     nameTable: "meta_campaigns",
     nameId: "campaign_id",
     entityField: "entity_id",
+    channelKey: "meta_ads",
     select: "date, entity_id, impressions, link_clicks, spend, conversions, leads",
-    map: (r) => ({ date: String(r.date), entity: String(r.entity_id), impressions: num(r.impressions), clicks: num(r.link_clicks), spend: num(r.spend), conversions: num(r.conversions), leads: num(r.leads) }),
-    convLabel: "Conversies",
-    useLeads: false,
+    map: (r) => ({ date: String(r.date), entity: String(r.entity_id), impressions: num(r.impressions), clicks: num(r.link_clicks), spend: num(r.spend), convFields: { conversions: num(r.conversions), leads: num(r.leads) } }),
   },
   linkedin: {
     accountTable: "linkedin_account_daily",
@@ -56,10 +55,9 @@ const CONFIG: Record<ChannelKind, ChannelConfig> = {
     nameTable: "linkedin_campaigns",
     nameId: "campaign_urn",
     entityField: "entity_urn",
-    select: "date, entity_urn, impressions, clicks, spend, external_website_conversions, one_click_leads",
-    map: (r) => ({ date: String(r.date), entity: String(r.entity_urn), impressions: num(r.impressions), clicks: num(r.clicks), spend: num(r.spend), conversions: num(r.external_website_conversions), leads: num(r.one_click_leads) }),
-    convLabel: "Leads",
-    useLeads: true,
+    channelKey: "linkedin_ads",
+    select: "date, entity_urn, impressions, clicks, spend, one_click_leads, external_website_conversions, post_click_conversions",
+    map: (r) => ({ date: String(r.date), entity: String(r.entity_urn), impressions: num(r.impressions), clicks: num(r.clicks), spend: num(r.spend), convFields: { one_click_leads: num(r.one_click_leads), external_website_conversions: num(r.external_website_conversions), post_click_conversions: num(r.post_click_conversions) } }),
   },
 };
 
@@ -77,6 +75,7 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
   const [account, setAccount] = useState<DailyRow[] | null>(null);
   const [campaign, setCampaign] = useState<DailyRow[]>([]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
+  const [convConfig, setConvConfig] = useState<ChannelConversionConfig>(() => resolveChannelConversionConfig(null));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -91,17 +90,23 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
       // account-tabel draagt geen campagnenaam en kan dus niet per beurs gesplitst worden.
       sb.from(cfg.campaignTable).select(cfg.select).eq("client_id", clientId).gte("date", since),
       sb.from(cfg.nameTable).select(`${cfg.nameId}, name`).eq("client_id", clientId),
-    ]).then(([accRes, campRes, nameRes]) => {
+      sb.from("client_settings").select("channel_conversion_config").eq("client_id", clientId).maybeSingle(),
+    ]).then(([accRes, campRes, nameRes, settingsRes]) => {
       if (cancelled) return;
       if (accRes.error) { setError(accRes.error.message); setAccount([]); return; }
       setAccount(((accRes.data ?? []) as unknown as Record<string, unknown>[]).map(cfg.map));
       setCampaign(((campRes.data ?? []) as unknown as Record<string, unknown>[]).map(cfg.map));
       setNames(new Map(((nameRes.data ?? []) as unknown as Record<string, unknown>[]).map((r) => [String(r[cfg.nameId]), String(r.name ?? r[cfg.nameId])])));
+      setConvConfig(resolveChannelConversionConfig((settingsRes.data?.channel_conversion_config ?? null) as Partial<ChannelConversionConfig> | null));
     });
     return () => { cancelled = true; };
   }, [clientId, channel, cfg]);
 
-  const convOf = (r: { conversions: number; leads: number }) => (cfg.useLeads ? r.leads : r.conversions);
+  // De conversie is de som van de geselecteerde velden voor dit kanaal (conversie-selectie).
+  const convOf = (r: DailyRow) => sumSelectedConversions(r.convFields, cfg.channelKey, convConfig);
+  const selectedLabels = selectedConversionLabels(cfg.channelKey, convConfig);
+  const convLabel = selectedLabels.join(" + ");
+  const useLeadsLabel = cfg.channelKey === "linkedin_ads"; // CPL vs CPA-naamgeving
 
   // Beurs-scope: de entiteiten waarvan de campagnenaam bij de gekozen geo-clone hoort. Zonder
   // scope is de bron de account-dagdata; mét scope her-aggregeren we uit de campagne-dagdata
@@ -172,7 +177,7 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
 
     return { empty: false as const, fullMonths, recent, prior, mtd, prevMtd, campaigns, dayOfMonth };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account, campaign, cfg.useLeads, geoClone, matchedEntities]);
+  }, [account, campaign, convConfig, geoClone, matchedEntities]);
 
   if (error) return <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">{error}</div>;
   if (account === null) {
@@ -190,14 +195,14 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
   const { fullMonths, recent, prior, mtd, prevMtd, campaigns, dayOfMonth } = derived;
   const cpa = (a: Agg): number | null => (a.conv > 0 ? a.spend / a.conv : null);
   const ctr = (a: Agg): number | null => (a.impressions > 0 ? a.clicks / a.impressions : null);
-  const chartData = fullMonths.map(([m, a]) => ({ maand: m, Spend: Math.round(a.spend), [cfg.convLabel]: Math.round(a.conv) }));
+  const chartData = fullMonths.map(([m, a]) => ({ maand: m, Spend: Math.round(a.spend), [convLabel]: Math.round(a.conv) }));
   const pace = deltaS(mtd.spend, prevMtd.spend);
   const pacePct = mtd.spend > 0 && prevMtd.spend > 0 ? mtd.spend / prevMtd.spend : null;
 
   const kpis: { label: string; value: string; delta: string | null }[] = [
     { label: "Spend (28d)", value: eur(recent.spend), delta: deltaS(recent.spend, prior.spend) },
-    { label: `${cfg.convLabel} (28d)`, value: fmt(recent.conv, 1), delta: deltaS(recent.conv, prior.conv) },
-    { label: cfg.useLeads ? "CPL (28d)" : "CPA (28d)", value: eur(cpa(recent)), delta: deltaS(cpa(recent), cpa(prior)) },
+    { label: `${convLabel} (28d)`, value: fmt(recent.conv, 1), delta: deltaS(recent.conv, prior.conv) },
+    { label: useLeadsLabel ? "CPL (28d)" : "CPA (28d)", value: eur(cpa(recent)), delta: deltaS(cpa(recent), cpa(prior)) },
     { label: "CTR (28d)", value: pctS(ctr(recent)), delta: deltaS(ctr(recent), ctr(prior)) },
   ];
 
@@ -232,7 +237,7 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
             <div className="font-semibold text-rm-gray">{eur(mtd.spend)} <span className="text-[11px] text-muted-foreground font-normal">(vorige maand op dag {dayOfMonth}: {eur(prevMtd.spend)})</span></div>
           </div>
           <div>
-            <div className="text-[11px] text-muted-foreground">{cfg.convLabel} deze maand</div>
+            <div className="text-[11px] text-muted-foreground">{convLabel} deze maand</div>
             <div className="font-semibold text-rm-gray">{fmt(mtd.conv, 1)} <span className="text-[11px] text-muted-foreground font-normal">(was {fmt(prevMtd.conv, 1)})</span></div>
           </div>
           <div>
@@ -259,7 +264,7 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
                 <Tooltip />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Bar yAxisId="spend" dataKey="Spend" fill="#08288C" radius={[3, 3, 0, 0]} opacity={0.85} />
-                <Line yAxisId="conv" dataKey={cfg.convLabel} stroke="#F16B37" strokeWidth={2} dot={{ r: 3 }} />
+                <Line yAxisId="conv" dataKey={convLabel} stroke="#F16B37" strokeWidth={2} dot={{ r: 3 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -281,8 +286,8 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
                 <th className="px-3 py-2 font-medium text-right">Vertoningen</th>
                 <th className="px-3 py-2 font-medium text-right">Klikken</th>
                 <th className="px-3 py-2 font-medium text-right">CTR</th>
-                <th className="px-3 py-2 font-medium text-right">{cfg.convLabel}</th>
-                <th className="px-5 py-2 font-medium text-right">{cfg.useLeads ? "CPL" : "CPA"}</th>
+                <th className="px-3 py-2 font-medium text-right">{convLabel}</th>
+                <th className="px-5 py-2 font-medium text-right">{useLeadsLabel ? "CPL" : "CPA"}</th>
               </tr>
             </thead>
             <tbody>
@@ -318,8 +323,8 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
                   <th className="px-3 py-2 font-medium text-right">Vertoningen</th>
                   <th className="px-3 py-2 font-medium text-right">Klikken</th>
                   <th className="px-3 py-2 font-medium text-right">CTR</th>
-                  <th className="px-3 py-2 font-medium text-right">{cfg.convLabel}</th>
-                  <th className="px-5 py-2 font-medium text-right">{cfg.useLeads ? "CPL" : "CPA"}</th>
+                  <th className="px-3 py-2 font-medium text-right">{convLabel}</th>
+                  <th className="px-5 py-2 font-medium text-right">{useLeadsLabel ? "CPL" : "CPA"}</th>
                 </tr>
               </thead>
               <tbody>
