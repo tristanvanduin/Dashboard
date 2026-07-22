@@ -48,6 +48,7 @@ import { ChannelConversionSettings } from "./channel-conversion-settings";
 import { ChannelStructureAnalysis } from "./channel-structure-analysis";
 import { GeoCloneScope } from "./geo-clone-scope";
 import { GeoCloneOverview } from "./geo-clone-overview";
+import { EventPacing } from "./event-pacing";
 import { TrackingAlert } from "./tracking-alert";
 import { ClientReporting } from "./client-reporting";
 import { BrandThemeProvider } from "../branding/brand-theme-provider";
@@ -280,6 +281,8 @@ export function ClientDashboard({ client }: { client: Client }) {
                 // Beurs gekozen: her-geaggregeerd beursoverzicht (uit campagnedata) i.p.v. de
                 // account-brede kaarten, die niet per beurs te splitsen zijn.
                 <>
+                  {/* Event-relatieve pacing: opbouw tot nu vs dezelfde afstand tot de vorige editie. */}
+                  <EventPacing clientId={client.id} geoClone={geoClone} />
                   <GeoCloneOverview clientId={client.id} geoClone={geoClone} />
                   <ClientNotes clientId={client.id} />
                 </>

@@ -7,8 +7,9 @@
 // =====================================================================
 
 import { NextRequest } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, saveAnalysisOutputSection } from "@/lib/analysis/helpers";
-import { analyzeGeoClone } from "@/lib/rai/geo-clone-analysis";
+import { analyzeGeoClone, type GeoCloneAnalysisResult } from "@/lib/rai/geo-clone-analysis";
 import { RAI_GEO_CLONES, matchGeoCloneByCampaignName } from "@/lib/rai/geo-clone-catalog";
 import type { DailyPoint } from "@/lib/rai/event-time-axis";
 import { resolveChannelConversionConfig, sumSelectedConversions, type ChannelConversionConfig } from "@/lib/analysis/channel-conversion-config";
@@ -26,38 +27,14 @@ function parseParams(clientId: string | null, geoClone: string | null): { client
   return { clientId, geoClone: geoClone.trim().toUpperCase() };
 }
 
-export async function GET(request: NextRequest) {
-  const url = new URL(request.url);
-  const params = parseParams(url.searchParams.get("client_id"), url.searchParams.get("geo_clone"));
-  if (!params) return Response.json({ error: "client_id en geo_clone zijn verplicht" }, { status: 400 });
-  const supabase = getSupabase();
-  if (!supabase) return Response.json({ error: "Supabase is niet geconfigureerd" }, { status: 500 });
-
-  const { data } = await supabase
-    .from("sop_analysis_output")
-    .select("output, model_used, analysis_date")
-    .eq("client_id", params.clientId)
-    .eq("sop_type", SOP_TYPE)
-    .eq("section", sectionFor(params.geoClone))
-    .order("analysis_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return Response.json({ analysis: data ?? null });
-}
-
-export async function POST(request: NextRequest) {
-  const supabase = getSupabase();
-  if (!supabase) return Response.json({ error: "Supabase is niet geconfigureerd" }, { status: 500 });
-
-  let params: { clientId: string; geoClone: string } | null = null;
-  try {
-    const body = await request.json();
-    params = parseParams(body.client_id ?? null, body.geo_clone ?? null);
-  } catch { /* onder afgehandeld */ }
-  if (!params) return Response.json({ error: "client_id en geo_clone zijn verplicht" }, { status: 400 });
-  const { clientId, geoClone } = params;
-
+// Assembleert de data (Google-maanden + Meta/LinkedIn-dagpunten, edities/doel met account-
+// fallback) en draait de deterministische event-relatieve analyse. Gedeeld door POST (opslaan +
+// wachtrij) en de live-pacing-GET (alleen lezen). Puur verplaatst; geen gedragswijziging.
+async function runGeoCloneAnalysis(
+  supabase: SupabaseClient,
+  clientId: string,
+  geoClone: string,
+): Promise<{ result: GeoCloneAnalysisResult; rows: CampaignMonthlyRow[]; fairLabel: string } | { error: string; status: number }> {
   const [rowsRes, settingsRes, gcRes, metaCampRes, metaDailyRes, liCampRes, liDailyRes] = await Promise.all([
     supabase
       .from("ads_campaign_monthly")
@@ -73,17 +50,15 @@ export async function POST(request: NextRequest) {
   ]);
 
   const rows = (rowsRes.data ?? []) as CampaignMonthlyRow[];
-  if (rows.length === 0) return Response.json({ error: "Geen campagne-maanddata voor deze klant" }, { status: 404 });
+  if (rows.length === 0) return { error: "Geen campagne-maanddata voor deze klant", status: 404 };
 
   const variant = RAI_GEO_CLONES.find((v) => v.abbreviation === geoClone) ?? null;
   const fairLabel = variant ? `${variant.brand} ${variant.location}` : geoClone;
 
-  // Account-niveau event-config: de rai_events-entry met deze afkorting.
   const events = ((settingsRes.data?.rai_events as { events?: RaiEventCfg[] } | null)?.events ?? []);
   const accountEvent = events.find((e) => (e.abbrev ?? "").trim().toUpperCase() === geoClone) ?? null;
   const kpi = (settingsRes.data?.kpi_targets ?? null) as Record<string, unknown> | null;
 
-  // Per-beurs-instellingen met account-fallback (fase 2-resolver).
   const event = resolveEvent(
     { cadence: accountEvent?.cadence ?? variant?.cadence ?? null, editions: accountEvent?.editions ?? [] },
     (gcRes.data?.event as { cadence?: Cadence | null; editions?: Edition[] | null } | null) ?? null
@@ -93,10 +68,6 @@ export async function POST(request: NextRequest) {
     (gcRes.data?.goals as { conversionsAbsolute?: number | null } | null) ?? null
   );
 
-  // Meta/LinkedIn als dag-conversiepunten, gefilterd op de campagnes die bij deze beurs horen
-  // (op campagnenaam via de geo-clone-catalogus). Zo krijgen ze dezelfde event-relatieve
-  // forecast als Google en tellen ze mee in het blended beursbeeld.
-  // Conversie-selectie per kanaal: welke velden tellen als conversie voor Meta/LinkedIn.
   const convConfig: ChannelConversionConfig = resolveChannelConversionConfig(
     (settingsRes.data?.channel_conversion_config ?? null) as Partial<ChannelConversionConfig> | null
   );
@@ -143,6 +114,73 @@ export async function POST(request: NextRequest) {
     asOfDate,
     channelConvPoints,
   });
+
+  return { result, rows, fairLabel };
+}
+
+// Compacte, altijd-live pacing-uitlezing: event-relatief (opbouw tot nu vs hetzelfde punt vóór de
+// vorige editie, op gelijke afstand tot de beursdag). Geen opslag, geen wachtrij.
+function pacingSummary(geoClone: string, fairLabel: string, result: GeoCloneAnalysisResult) {
+  const c = result.conversions;
+  return {
+    geoClone,
+    fairLabel,
+    daysToFair: result.forecast?.daysToFairNow ?? null,
+    currentEditionId: result.currentEditionId,
+    previousEditionId: result.previousEditionId,
+    comparable: c?.comparable ?? false,
+    currentCumulative: c?.currentCumulative ?? null,
+    previousCumulative: c?.previousCumulativeAtSameDaysOut ?? null,
+    deltaPct: c?.deltaPct ?? null,
+    costDeltaPct: result.cost?.deltaPct ?? null,
+    actionNeeded: result.actionNeeded,
+    degradations: result.degradations,
+  };
+}
+
+export async function GET(request: NextRequest) {
+  const url = new URL(request.url);
+  const params = parseParams(url.searchParams.get("client_id"), url.searchParams.get("geo_clone"));
+  if (!params) return Response.json({ error: "client_id en geo_clone zijn verplicht" }, { status: 400 });
+  const supabase = getSupabase();
+  if (!supabase) return Response.json({ error: "Supabase is niet geconfigureerd" }, { status: 500 });
+
+  // Live pacing-uitlezing: draai de deterministische analyse en geef alleen de pacing terug.
+  if (url.searchParams.get("live") === "1") {
+    const run = await runGeoCloneAnalysis(supabase, params.clientId, params.geoClone);
+    if ("error" in run) return Response.json({ error: run.error }, { status: run.status });
+    return Response.json({ pacing: pacingSummary(params.geoClone, run.fairLabel, run.result) });
+  }
+
+  const { data } = await supabase
+    .from("sop_analysis_output")
+    .select("output, model_used, analysis_date")
+    .eq("client_id", params.clientId)
+    .eq("sop_type", SOP_TYPE)
+    .eq("section", sectionFor(params.geoClone))
+    .order("analysis_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return Response.json({ analysis: data ?? null });
+}
+
+export async function POST(request: NextRequest) {
+  const supabase = getSupabase();
+  if (!supabase) return Response.json({ error: "Supabase is niet geconfigureerd" }, { status: 500 });
+
+  let params: { clientId: string; geoClone: string } | null = null;
+  try {
+    const body = await request.json();
+    params = parseParams(body.client_id ?? null, body.geo_clone ?? null);
+  } catch { /* onder afgehandeld */ }
+  if (!params) return Response.json({ error: "client_id en geo_clone zijn verplicht" }, { status: 400 });
+  const { clientId, geoClone } = params;
+
+  const run = await runGeoCloneAnalysis(supabase, clientId, geoClone);
+  if ("error" in run) return Response.json({ error: run.error }, { status: run.status });
+  const { result, rows, fairLabel } = run;
+  const asOfDate = new Date().toISOString().slice(0, 10);
 
   const months = rows.map((r) => r.month).sort();
   const { error: saveError } = await saveAnalysisOutputSection({
