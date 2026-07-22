@@ -82,6 +82,32 @@ function campaignRows() {
   return rows;
 }
 
+// Per-land maanddata voor de geo-mapping (demo): NL sterkst (thuismarkt), US medium, CA (GRN
+// Canada) het zwakst op CPA — zodat de metric-selector iets te vertellen heeft (op conversies
+// leidt NL; op CPA is Canada de duurste). Afgeleide velden uit de basiscijfers.
+function demoCountryRow(countryCode: string, month: string, impressions: number, clicks: number, cost: number, conversions: number, conversionsValue: number) {
+  return {
+    countryCode, month, impressions, clicks, cost, conversions, conversionsValue,
+    ctr: impressions > 0 ? clicks / impressions : 0,
+    avgCpc: clicks > 0 ? cost / clicks : 0,
+    costPerConversion: conversions > 0 ? cost / conversions : 0,
+    conversionRate: clicks > 0 ? conversions / clicks : 0,
+    roas: cost > 0 ? conversionsValue / cost : 0,
+    campaignCount: 2, spendShare: 0,
+  };
+}
+const DEMO_COUNTRY_MONTHLY = [
+  demoCountryRow("NL", "2026-05-01", 44000, 2050, 3820, 76, 9880),
+  demoCountryRow("NL", "2026-06-01", 45500, 2120, 3960, 79, 10270),
+  demoCountryRow("NL", "2026-07-01", 43000, 2000, 3800, 75, 9750),
+  demoCountryRow("US", "2026-05-01", 31000, 1360, 2980, 40, 5200),
+  demoCountryRow("US", "2026-06-01", 32500, 1420, 3100, 42, 5460),
+  demoCountryRow("US", "2026-07-01", 30500, 1350, 2950, 39, 5070),
+  demoCountryRow("CA", "2026-05-01", 15500, 600, 1360, 14, 1400),
+  demoCountryRow("CA", "2026-06-01", 16200, 630, 1420, 15, 1500),
+  demoCountryRow("CA", "2026-07-01", 15000, 590, 1340, 14, 1400),
+];
+
 // De volledige respons zoals /api/google-ads/client-data die teruggeeft (mock-variant).
 export function buildGreentechClientData(customerId: string) {
   const cur = months(BASE_2026);
@@ -130,7 +156,7 @@ export function buildGreentechClientData(customerId: string) {
     campaignCountryMap: { "GRT | Search | NL": "NL", "GRA | Search | US": "US", "GreenTech | Brand": "NL", "GRN | Search | Canada": "CA" },
     campaignCountryShares: { "GRT | Search | NL": { NL: 1 }, "GRA | Search | US": { US: 1 }, "GreenTech | Brand": { NL: 1 }, "GRN | Search | Canada": { CA: 1 } },
     detectedCountries: ["NL", "US", "CA"],
-    countryMonthlyData: [],
+    countryMonthlyData: DEMO_COUNTRY_MONTHLY,
     adGroupBleeders: [],
     adGroupPerformance: [],
     productBleeders: [],
