@@ -1,9 +1,17 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Globe2 } from "lucide-react";
+import { Globe2, Loader2 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useClientDataState } from "@/lib/client-data-provider";
 import { countryLabel } from "@/lib/countries";
+
+// De kaart (SVG + geometrie + d3-geo) client-only en code-split laden: pas geladen als deze
+// weergave rendert, en nooit tijdens SSR.
+const WorldMap = dynamic(() => import("./world-map"), {
+  ssr: false,
+  loading: () => <div className="flex justify-center py-16"><Loader2 className="w-5 h-5 animate-spin text-rm-blue" /></div>,
+});
 
 // Geo-mapping: waar komt het verkeer / de conversies vandaan, per gekozen metric. Interactief —
 // je kiest de metric (impressies, klikken, CTR, conversies, conversieratio, CPA) en de landen
@@ -56,8 +64,12 @@ export function GeoBreakdown({ clientId }: { clientId: string }) {
       .sort((a, b) => (metric.higherIsBetter ? (b.v! - a.v!) : (a.v! - b.v!)));
   }, [countries, metric]);
 
-  // Schaal voor de balklengte: altijd op de absolute grootte van de metric (max = vol).
-  const maxV = useMemo(() => Math.max(1, ...ranked.map((x) => Math.abs(x.v ?? 0))), [ranked]);
+  // Waarde per alpha-2-landcode voor de kaart-inkleuring van de gekozen metric.
+  const values = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const { c, v } of ranked) if (v != null && Number.isFinite(v)) m.set(c.code, v);
+    return m;
+  }, [ranked]);
 
   if (countries.length <= 1) return null; // één (of geen) land: geen geo-verhaal
 
@@ -65,37 +77,28 @@ export function GeoBreakdown({ clientId }: { clientId: string }) {
     <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
       <div className="px-5 py-3 border-b border-border flex items-center gap-2 flex-wrap">
         <Globe2 className="w-4.5 h-4.5 text-rm-blue" />
-        <h3 className="text-sm font-semibold text-rm-gray">Waar komt het vandaan — per land</h3>
-        <span className="text-[11px] text-muted-foreground">kies een metric</span>
-        <div className="ml-auto flex gap-1 flex-wrap">
-          {METRICS.map((m) => (
-            <button
-              key={m.key}
-              onClick={() => setMetricKey(m.key)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${m.key === metricKey ? "bg-rm-blue text-white" : "bg-gray-100 text-muted-foreground hover:text-rm-gray"}`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
+        <h3 className="text-sm font-semibold text-rm-gray">Waar komt het vandaan</h3>
+        {/* Slimme dropdown naast de kaart: kies de metric die de kaart inkleurt. */}
+        <label className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          Toon
+          <select
+            value={metricKey}
+            onChange={(e) => setMetricKey(e.target.value as MetricKey)}
+            className="rounded-md border border-border bg-white px-2 py-1 text-[12px] font-medium text-rm-gray focus:outline-none focus:ring-1 focus:ring-rm-blue"
+          >
+            {METRICS.map((m) => (
+              <option key={m.key} value={m.key}>{m.label}</option>
+            ))}
+          </select>
+          per land
+        </label>
       </div>
 
-      <div className="px-5 py-4 space-y-1.5">
+      <div className="px-3 py-3">
         {ranked.length === 0 ? (
           <p className="text-[12px] text-muted-foreground py-4 text-center">Geen land-data voor deze metric.</p>
         ) : (
-          ranked.map(({ c, v }) => {
-            const frac = Math.min(1, Math.abs(v ?? 0) / maxV);
-            return (
-              <div key={c.code} className="flex items-center gap-3">
-                <div className="w-32 shrink-0 text-[12px] text-rm-gray font-medium truncate">{countryLabel(c.code)}</div>
-                <div className="flex-1 h-5 rounded bg-gray-100 overflow-hidden">
-                  <div className="h-full rounded" style={{ width: `${Math.max(2, frac * 100)}%`, background: "var(--brand-primary, #08288C)", opacity: 0.35 + frac * 0.6 }} />
-                </div>
-                <div className="w-24 shrink-0 text-right text-[12px] font-semibold text-rm-gray tabular-nums">{metric.fmt(v)}</div>
-              </div>
-            );
-          })
+          <WorldMap values={values} format={metric.fmt} metricLabel={metric.label} />
         )}
       </div>
 
