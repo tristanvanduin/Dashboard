@@ -2,6 +2,8 @@
 
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { TrendingUp } from "lucide-react";
+import { useBrandTheme } from "../branding/brand-theme-provider";
+import { CHART_CATEGORICAL, CHART_GRID, CHART_LINE_SECONDARY } from "@/lib/branding/chart-colors";
 
 // Herbruikbare maand-trendgrafiek: spend-balken (linker-as) plus een tweede metriek als lijn
 // (rechter-as). Gebruikt door het beursoverzicht en de cross-channel-view zodat het verhaal
@@ -20,6 +22,7 @@ export function MonthlyTrendChart({ title, data, lineLabel, height = 240 }: {
   lineLabel: string;
   height?: number;
 }) {
+  const { theme } = useBrandTheme();
   if (data.length < 2) return null;
   const rows = data.map((d) => ({ maand: d.maand, Spend: Math.round(d.spend), [lineLabel]: Math.round(d.lijn) }));
 
@@ -32,14 +35,14 @@ export function MonthlyTrendChart({ title, data, lineLabel, height = 240 }: {
       <div className="px-3 py-4" style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={rows} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#eef1f6" />
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
             <XAxis dataKey="maand" tick={{ fontSize: 11 }} />
             <YAxis yAxisId="spend" tick={{ fontSize: 11 }} />
             <YAxis yAxisId="lijn" orientation="right" tick={{ fontSize: 11 }} />
             <Tooltip />
             <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Bar yAxisId="spend" dataKey="Spend" fill="#08288C" radius={[3, 3, 0, 0]} opacity={0.85} />
-            <Line yAxisId="lijn" dataKey={lineLabel} stroke="#F16B37" strokeWidth={2} dot={{ r: 3 }} />
+            <Bar yAxisId="spend" dataKey="Spend" fill={theme.primary} radius={[3, 3, 0, 0]} opacity={0.9} />
+            <Line yAxisId="lijn" dataKey={lineLabel} stroke={CHART_LINE_SECONDARY} strokeWidth={2} dot={{ r: 3 }} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -47,8 +50,8 @@ export function MonthlyTrendChart({ title, data, lineLabel, height = 240 }: {
   );
 }
 
-// Gegroepeerde maandbalken per serie (bijv. spend per kanaal), voor de cross-channel-vergelijking.
-const SERIES_COLORS = ["#08288C", "#F16B37", "#3B9C6E", "#8B5CF6"];
+// Gegroepeerde maandbalken per serie (bijv. spend per kanaal): categorische vergelijking, dus het
+// gevalideerde categorische palet (kleurenblind-veilig, merk-onafhankelijk).
 
 export function GroupedMonthlyBars({ title, months, series, data, height = 260 }: {
   title: string;
@@ -67,13 +70,13 @@ export function GroupedMonthlyBars({ title, months, series, data, height = 260 }
       <div className="px-3 py-4" style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#eef1f6" />
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
             <XAxis dataKey="maand" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             {series.map((s, i) => (
-              <Bar key={s} dataKey={s} fill={SERIES_COLORS[i % SERIES_COLORS.length]} radius={[3, 3, 0, 0]} opacity={0.9} />
+              <Bar key={s} dataKey={s} fill={CHART_CATEGORICAL[i % CHART_CATEGORICAL.length]} radius={[3, 3, 0, 0]} opacity={0.95} />
             ))}
           </ComposedChart>
         </ResponsiveContainer>

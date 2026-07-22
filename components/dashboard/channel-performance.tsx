@@ -6,6 +6,8 @@ import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, C
 import { supabase } from "@/lib/supabase";
 import { matchGeoCloneByCampaignName } from "@/lib/rai/geo-clone-catalog";
 import { resolveChannelConversionConfig, sumSelectedConversions, selectedConversionLabels, type ChannelConversionConfig, type ChannelConversionChannel } from "@/lib/analysis/channel-conversion-config";
+import { useBrandTheme } from "../branding/brand-theme-provider";
+import { CHART_GRID, CHART_LINE_SECONDARY } from "@/lib/branding/chart-colors";
 
 // Volwaardige prestatie-view voor Meta en LinkedIn: dezelfde bouwstenen als Google
 // (KPI-kaarten, pacing, maandtabel, grafiek, campagnetabel), gevoed uit de dag-tabellen van
@@ -72,6 +74,7 @@ const emptyAgg = (): Agg => ({ impressions: 0, clicks: 0, spend: 0, conv: 0 });
 
 export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: string; channel: ChannelKind; geoClone?: string | null }) {
   const cfg = CONFIG[channel];
+  const { theme } = useBrandTheme();
   const [account, setAccount] = useState<DailyRow[] | null>(null);
   const [campaign, setCampaign] = useState<DailyRow[]>([]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
@@ -263,14 +266,14 @@ export function ChannelPerformance({ clientId, channel, geoClone }: { clientId: 
           <div className="px-3 py-4" style={{ height: 260 }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eef1f6" />
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
                 <XAxis dataKey="maand" tick={{ fontSize: 11 }} />
                 <YAxis yAxisId="spend" tick={{ fontSize: 11 }} />
                 <YAxis yAxisId="conv" orientation="right" tick={{ fontSize: 11 }} />
                 <Tooltip />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar yAxisId="spend" dataKey="Spend" fill="#08288C" radius={[3, 3, 0, 0]} opacity={0.85} />
-                <Line yAxisId="conv" dataKey={convLabel} stroke="#F16B37" strokeWidth={2} dot={{ r: 3 }} />
+                <Bar yAxisId="spend" dataKey="Spend" fill={theme.primary} radius={[3, 3, 0, 0]} opacity={0.9} />
+                <Line yAxisId="conv" dataKey={convLabel} stroke={CHART_LINE_SECONDARY} strokeWidth={2} dot={{ r: 3 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
