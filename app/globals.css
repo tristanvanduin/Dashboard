@@ -61,12 +61,15 @@
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 
-  /* Ranking Masters brand colors */
-  --color-rm-blue: #08288C;
-  --color-rm-orange: #F16B37;
+  /* Merk-tokens. Wijzen naar --brand-* variabelen die de BrandThemeProvider per beurs/klant
+     zet; zonder provider vallen ze terug op de Ranking Masters-huisstijl. Zo kleurt élk bestaand
+     gebruik van rm-blue/rm-orange automatisch mee met het actieve merk, zonder de componenten
+     aan te raken. Neutralen (gray/border/light) blijven vast voor leesbaarheid. */
+  --color-rm-blue: var(--brand-primary, #08288C);
+  --color-rm-orange: var(--brand-accent, #F16B37);
   --color-rm-light: #f9fafc;
-  --color-rm-blue-light: #0a35b0;
-  --color-rm-orange-light: #f4885e;
+  --color-rm-blue-light: var(--brand-primary-light, #0a35b0);
+  --color-rm-orange-light: var(--brand-accent-light, #f4885e);
   --color-rm-gray: #32373c;
   --color-rm-border: #E1E5F2;
 }
