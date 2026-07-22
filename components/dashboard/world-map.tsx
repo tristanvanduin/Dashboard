@@ -45,9 +45,11 @@ export interface WorldMapProps {
   format: (v: number) => string;
   /** label van de gekozen metric (voor de tooltip). */
   metricLabel: string;
+  /** optioneel: klik op een land (bv. VS) om in te zoomen op de drilldown. */
+  onCountryClick?: (alpha2: string) => void;
 }
 
-export default function WorldMap({ values, format, metricLabel }: WorldMapProps) {
+export default function WorldMap({ values, format, metricLabel, onCountryClick }: WorldMapProps) {
   const [hover, setHover] = useState<{ alpha2: string; x: number; y: number } | null>(null);
 
   const max = useMemo(() => Math.max(1, ...[...values.values()].map((v) => Math.abs(v))), [values]);
@@ -61,6 +63,7 @@ export default function WorldMap({ values, format, metricLabel }: WorldMapProps)
           const v = s.alpha2 ? values.get(s.alpha2) : undefined;
           const has = v != null && Number.isFinite(v);
           const isHover = !!hover && hover.alpha2 === s.alpha2;
+          const clickable = has && !!s.alpha2 && !!onCountryClick;
           return (
             <path
               key={s.key}
@@ -68,7 +71,8 @@ export default function WorldMap({ values, format, metricLabel }: WorldMapProps)
               fill={has ? ramp(Math.abs(v as number) / max) : "#eef1f6"}
               stroke={isHover ? "#08288C" : "#ffffff"}
               strokeWidth={isHover ? 1.4 : 0.4}
-              style={{ cursor: has ? "pointer" : "default", opacity: hover && !isHover ? 0.9 : 1, transition: "opacity 120ms" }}
+              style={{ cursor: clickable ? "pointer" : "default", opacity: hover && !isHover ? 0.9 : 1, transition: "opacity 120ms" }}
+              onClick={() => { if (clickable && s.alpha2) onCountryClick!(s.alpha2); }}
               onMouseMove={(e) => {
                 if (!has || !s.alpha2) { setHover(null); return; }
                 const box = (e.currentTarget.ownerSVGElement?.parentElement as HTMLElement)?.getBoundingClientRect();
