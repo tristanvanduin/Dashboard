@@ -7,7 +7,7 @@ import { computeForecast, type ClientForecast } from "@/lib/forecast";
 import { getClientSettings } from "@/lib/client-settings";
 import { supabase } from "@/lib/supabase";
 import type { ImpressionShareData } from "@/lib/use-client-data";
-import { channelOfSopType, type InsightChannel } from "@/lib/insights/channel-of";
+import { channelOfSopType, CHANNEL_LABEL, type InsightChannel } from "@/lib/insights/channel-of";
 
 type Priority = "high" | "medium" | "low";
 
@@ -321,6 +321,10 @@ export function RecommendationsBlock({
   // Kanaal-filter via de sop_type van de analyse die de aanbeveling schreef.
   const channelRecs = channel ? dbRecs.filter((r) => channelOfSopType(r.sop_type) === channel) : dbRecs;
   const hasDbRecs = channelRecs.length > 0;
+  // De legacy-aanbevelingen komen uit de Google/SEA-forecast (biedstrategie, impressieaandeel,
+  // zoektermen …) en zijn NIET kanaal-neutraal. Toon ze alleen onder Google of "Alle kanalen";
+  // Meta/LinkedIn/Cross krijgen uitsluitend hun eigen, kanaal-specifieke aanbevelingen.
+  const showLegacy = !hasDbRecs && (channel == null || channel === "google");
   const filteredRecs = selectedInsightId
     ? channelRecs.filter((r) => r.insight_id === selectedInsightId)
     : channelRecs;
@@ -388,8 +392,16 @@ export function RecommendationsBlock({
         );
       })()}
 
-      {/* Legacy generated recommendations */}
-      {!hasDbRecs && (
+      {/* Kanaal-specifieke lege staat: geen generieke Google-recs onder Meta/LinkedIn/Cross. */}
+      {!hasDbRecs && !showLegacy && channel && (
+        <p className="text-sm text-muted-foreground py-3">
+          Nog geen {CHANNEL_LABEL[channel]}-aanbevelingen. Draai de {CHANNEL_LABEL[channel]}-analyses
+          (Analyseren → {CHANNEL_LABEL[channel]}); de uitkomsten verschijnen hier, gekoppeld aan het kanaal.
+        </p>
+      )}
+
+      {/* Legacy (Google/SEA) generated recommendations — alleen onder Google of "Alle". */}
+      {showLegacy && (
         <>
         <div className="space-y-3">
           {(isExpanded ? legacyRecs : legacyRecs.slice(0, 3)).map((rec, i) => {
