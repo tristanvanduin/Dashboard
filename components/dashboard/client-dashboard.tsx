@@ -22,6 +22,7 @@ import { ProposalQueue } from "../insights/proposal-queue";
 import { ChannelFilter } from "../insights/channel-filter";
 import { MetaCreativeAnalyses } from "../insights/meta-creative-analyses";
 import { SignalAnalysisCard } from "./signal-analysis-card";
+import { CrossChannelAnalyses } from "./cross-channel-analyses";
 import { CreativePerformance } from "./creative-performance";
 import { ChannelForecast } from "./channel-forecast";
 import { CreativeDeepDive } from "./creative-deep-dive";
@@ -594,17 +595,9 @@ function InsightsTab({ clientId, onSopError }: { clientId: string; onSopError?: 
       )}
       {analysisChannel === "blended" && (
         <>
-          <Section>Losse analyses</Section>
-          <SignalAnalysisCard
-            clientId={clientId}
-            endpoint="/api/analysis/cross-channel"
-            title="Cross-channel-signalen"
-            description="Deterministische detectie tussen kanalen: zaai-oogst, CPL-arbitrage, mix-shift, doelgroep-samenhang, de cross-funnel (blended totaal, fase-achterblijver, divergentie) én de blended KPI-verhoudingen. Voedt de goedkeuringswachtrij."
-          />
-          <p className="text-[11px] text-muted-foreground">
-            Cross-channel draait als één deterministische run; de sub-analyses (funnel, KPI-verhoudingen, mix-shift,
-            arbitrage, doelgroep-samenhang) staan als aparte secties in de uitkomst hierboven.
-          </p>
+          <Section>Sub-analyses</Section>
+          {/* Cross-channel als losse sub-analyse-kaarten (net als de kanalen), uit één run. */}
+          <CrossChannelAnalyses clientId={clientId} />
         </>
       )}
 
