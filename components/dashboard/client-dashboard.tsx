@@ -48,8 +48,11 @@ import { ChannelConversionSettings } from "./channel-conversion-settings";
 import { ChannelStructureAnalysis } from "./channel-structure-analysis";
 import { GeoCloneScope } from "./geo-clone-scope";
 import { GeoCloneOverview } from "./geo-clone-overview";
+import { EventPacing } from "./event-pacing";
 import { TrackingAlert } from "./tracking-alert";
 import { ClientReporting } from "./client-reporting";
+import { BrandThemeProvider } from "../branding/brand-theme-provider";
+import { BrandHeaderBar } from "../branding/brand-header-bar";
 import { useClientData } from "@/lib/use-client-data";
 import { ClientDataProvider } from "@/lib/client-data-provider";
 import { AnalysisProvider } from "@/lib/analysis-context";
@@ -179,7 +182,10 @@ export function ClientDashboard({ client }: { client: Client }) {
   }, [client.id]);
 
   return (
+    <BrandThemeProvider clientId={client.id} geoClone={geoClone}>
     <div className="space-y-6">
+      {/* Merk-header: logo + merk-/beursnaam, in de huisstijl van de actieve klant/beurs. */}
+      <BrandHeaderBar geoClone={geoClone} fallbackName={client.name} />
       {/* Data source indicator + sync status */}
       {clientData.source === "api" && !clientData.loading && !clientData.error && (
         <div className="flex items-center gap-2 flex-wrap">
@@ -275,6 +281,8 @@ export function ClientDashboard({ client }: { client: Client }) {
                 // Beurs gekozen: her-geaggregeerd beursoverzicht (uit campagnedata) i.p.v. de
                 // account-brede kaarten, die niet per beurs te splitsen zijn.
                 <>
+                  {/* Event-relatieve pacing: opbouw tot nu vs dezelfde afstand tot de vorige editie. */}
+                  <EventPacing clientId={client.id} geoClone={geoClone} />
                   <GeoCloneOverview clientId={client.id} geoClone={geoClone} />
                   <ClientNotes clientId={client.id} />
                 </>
@@ -474,6 +482,7 @@ export function ClientDashboard({ client }: { client: Client }) {
         </ClientDataProvider>
       )}
     </div>
+    </BrandThemeProvider>
   );
 }
 

@@ -15,6 +15,8 @@ import { useState } from "react";
 import { useClientHistoricalData } from "@/lib/client-data-provider";
 import { useCountryFilteredData } from "@/lib/use-country-filtered-data";
 import { computeForecast, ForecastMetric, MONTH_LABELS } from "@/lib/forecast";
+import { useBrandTheme } from "../branding/brand-theme-provider";
+import { CHART_CATEGORICAL, CHART_AXIS } from "@/lib/branding/chart-colors";
 
 function formatYAxis(metric: ForecastMetric) {
   if (metric === "revenue") {
@@ -47,6 +49,7 @@ export function PerformanceChart({ clientId, countryFilter }: { clientId: string
   const [metric, setMetric] = useState<ForecastMetric>("conversions");
   const [viewMode, setViewMode] = useState<ViewMode>("weekly");
   const [showYoY, setShowYoY] = useState(false);
+  const { theme } = useBrandTheme();
 
   const fullData = useClientHistoricalData(clientId);
   const clientData = useCountryFilteredData(clientId, countryFilter ?? null) ?? fullData;
@@ -195,35 +198,38 @@ export function PerformanceChart({ clientId, countryFilter }: { clientId: string
             />
           )}
 
-          {/* Previous year — purple, behind other lines */}
+          {/* Vorig jaar — een aparte categorische tint (violet), op de achtergrond. */}
           {showYoY && (
             <Line
               type="monotone"
               dataKey="vorigJaar"
-              stroke="#9333ea"
+              stroke={CHART_CATEGORICAL[6]}
               strokeWidth={1.5}
               strokeDasharray="4 4"
-              dot={viewMode === "monthly" ? { r: 2, fill: "#9333ea" } : false}
+              dot={viewMode === "monthly" ? { r: 2, fill: CHART_CATEGORICAL[6] } : false}
               name="Vorig jaar"
-              opacity={0.5}
+              opacity={0.6}
               connectNulls
             />
           )}
 
+          {/* Verwacht = de doel-/referentielijn: neutraal, niet met het merk concurreren. */}
           <Line
             type="monotone"
             dataKey="verwacht"
-            stroke="#08288C"
+            stroke={CHART_AXIS}
             strokeWidth={1.5}
+            strokeDasharray="5 4"
             dot={viewMode === "monthly" ? { r: 3 } : false}
             name="Verwacht"
-            opacity={0.4}
+            opacity={0.7}
             connectNulls
           />
+          {/* Gerealiseerd + prognose = dezelfde reeks (echt → geprojecteerd): de merkkleur, solide vs streep. */}
           <Line
             type="monotone"
             dataKey="gerealiseerd"
-            stroke="#F16B37"
+            stroke={theme.primary}
             strokeWidth={2.5}
             dot={viewMode === "monthly" ? { r: 4 } : { r: 2 }}
             name="Gerealiseerd"
@@ -232,7 +238,7 @@ export function PerformanceChart({ clientId, countryFilter }: { clientId: string
           <Line
             type="monotone"
             dataKey="prognose"
-            stroke="#F16B37"
+            stroke={theme.primary}
             strokeWidth={2}
             strokeDasharray="6 3"
             dot={viewMode === "monthly" ? { r: 3 } : false}

@@ -44,7 +44,7 @@ function Spark({ points }: { points: (number | null)[] }) {
   const coords = points.map((p, i) => (p == null ? null : `${i * step},${h - ((p - min) / range) * (h - 3) - 1.5}`)).filter(Boolean).join(" ");
   return (
     <svg width={w} height={h} className="inline-block align-middle">
-      <polyline points={coords} fill="none" stroke="#08288C" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points={coords} fill="none" style={{ stroke: "var(--brand-primary, #08288C)" }} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
