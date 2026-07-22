@@ -120,6 +120,15 @@ export interface BudgetRecommendation {
   currentMonthlySpend: number;
   /** % increase in spend needed */
   spendIncreasePct: number;
+  /** CPA-doel (voor de mix/efficiëntie-reconciliatie); null als niet ingesteld. */
+  cpaTarget: number | null;
+  /**
+   * true als de achterstand primair een EFFICIËNTIE-kwestie is, geen budgetkwestie: het account
+   * ligt achter op doel én de huidige CPA ligt materieel boven het CPA-doel. Meer budget koopt dan
+   * dure conversies; eerst herverdelen/CVR verbeteren is de juiste zet. Voorkomt dat de tool
+   * zichzelf tegenspreekt ("+X% budget" terwijl efficiency de bottleneck is).
+   */
+  efficiencyBottleneck: boolean;
 }
 
 export interface ForecastResult {
@@ -973,10 +982,20 @@ function deriveForecast(
 
 // ── Budget recommendation ────────────────────────────────────────────────
 
+// Vanaf 15% boven het CPA-doel noemen we de efficiëntie materieel te laag om budget op te schalen.
+export const CPA_INEFFICIENT_MARGIN = 1.15;
+
+// Reconciliatie-predicaat: is de achterstand een efficiëntie- i.p.v. een budgetkwestie? Achter op
+// doel én de CPA materieel boven het doel → meer budget koopt dure conversies; eerst herverdelen.
+export function isEfficiencyBottleneck(behindTarget: boolean, currentCpa: number, cpaTarget: number | null): boolean {
+  return Boolean(behindTarget && cpaTarget != null && cpaTarget > 0 && currentCpa > cpaTarget * CPA_INEFFICIENT_MARGIN);
+}
+
 function computeBudgetRecommendation(
   conversions: ForecastResult,
   adSpend: ForecastResult,
-  realizedThroughMonth: number
+  realizedThroughMonth: number,
+  cpaTarget: number | null
 ): BudgetRecommendation {
   const convTarget = conversions.kpi.annualTarget;
   const convAdjusted = conversions.kpi.adjustedAnnual;
@@ -1009,6 +1028,10 @@ function computeBudgetRecommendation(
     ? ((requiredMonthlySpend - currentMonthlySpend) / currentMonthlySpend) * 100
     : 0;
 
+  // Efficiëntie-reconciliatie: achter op doel én de CPA ligt materieel boven het doel → de
+  // bottleneck is effectiviteit, niet budget.
+  const efficiencyBottleneck = isEfficiencyBottleneck(behindTarget, currentCpa, cpaTarget);
+
   return {
     behindTarget,
     conversionGap: Math.round(conversionGap),
@@ -1017,6 +1040,8 @@ function computeBudgetRecommendation(
     requiredMonthlySpend,
     currentMonthlySpend,
     spendIncreasePct: parseFloat(spendIncreasePct.toFixed(1)),
+    cpaTarget: cpaTarget != null && cpaTarget > 0 ? parseFloat(cpaTarget.toFixed(2)) : null,
+    efficiencyBottleneck,
   };
 }
 
@@ -1094,7 +1119,7 @@ export function computeForecast(data: ClientHistoricalData): ClientForecast {
   const cpaResult = deriveForecast(adSpend, conversions, "cpa", true); // adSpend / conversions
 
   // Budget recommendation
-  const budgetRecommendation = computeBudgetRecommendation(conversions, adSpend, realizedThroughMonth);
+  const budgetRecommendation = computeBudgetRecommendation(conversions, adSpend, realizedThroughMonth, cpaResult.kpi.annualTarget ?? null);
 
   return {
     conversions,

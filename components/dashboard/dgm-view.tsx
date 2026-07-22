@@ -409,8 +409,14 @@ function computeBusinessImpact(forecast: ClientForecast): BusinessImpactStatemen
     });
   }
 
-  // Budget recommendation summary
-  if (budget.behindTarget && budget.spendIncreasePct > 5) {
+  // Budget recommendation summary — reconciliatie: is de achterstand een efficiëntie- of een
+  // budgetkwestie? Bij een efficiëntie-bottleneck spreken we onszelf niet tegen met "+X% budget".
+  if (budget.behindTarget && budget.efficiencyBottleneck) {
+    statements.push({
+      text: `Meer budget is niet de oplossing: de CPA (${fmt(budget.currentCpa)}) ligt boven het doel${budget.cpaTarget != null ? ` (${fmt(budget.cpaTarget)})` : ""}. Herstel eerst de efficiëntie en herverdeel budget van dure naar rendabele campagnes; schaal pas op als de CPA richting doel beweegt.`,
+      type: "neutral",
+    });
+  } else if (budget.behindTarget && budget.spendIncreasePct > 5) {
     statements.push({
       text: `Met een budgetverhoging van ${Math.round(budget.spendIncreasePct)}% (naar ${fmt(budget.requiredMonthlySpend)}/maand) kan het conversiedoel waarschijnlijk alsnog gehaald worden.`,
       type: "neutral",
@@ -455,6 +461,14 @@ function computeDecisions(
         reason: `Het huidige budget wordt gemiddeld voor ${Math.round(avgUtilization * 100)}% benut. ${lowUtilCampaigns.length} campagne(s) besteden minder dan de helft van hun dagbudget. Meer budget toewijzen lost het probleem niet op — het volume moet omhoog.`,
         urgency: "hoog",
         expectedEffect: `Plan nodig: zoekwoorden verbreden, targeting uitbreiden, nieuwe campagnetypes (Shopping/PMax/Display), of biedingen verhogen om meer vertoningen te pakken.`,
+      });
+    } else if (budget.efficiencyBottleneck) {
+      // Budget wordt wél opgemaakt, maar tegen een te hoge CPA: efficiëntie, geen budgetkwestie.
+      decisions.push({
+        decision: `Efficiency verbeteren vóór budget verhogen`,
+        reason: `Het account ligt achter op doel, maar de CPA (${fmt(budget.currentCpa)}) ligt boven het doel${budget.cpaTarget != null ? ` (${fmt(budget.cpaTarget)})` : ""} terwijl het budget goed benut wordt (${Math.round(avgUtilization * 100)}%). Meer budget koopt dan dure conversies. Verschuif eerst budget van dure naar rendabele campagnes en herstel de conversieratio.`,
+        urgency: "hoog",
+        expectedEffect: `Doelbereik zonder ${Math.round(budget.spendIncreasePct)}% extra budget door de mix te herverdelen richting de campagnes onder het CPA-doel; schaal pas op als de CPA richting doel beweegt.`,
       });
     } else {
       decisions.push({
