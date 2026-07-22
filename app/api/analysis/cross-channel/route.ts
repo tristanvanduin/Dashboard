@@ -21,6 +21,7 @@ import type { SignalStory, DetectionResult } from "@/lib/signals/types";
 import { saveSignalHypotheses } from "@/lib/analysis/signals-to-hypotheses";
 import { fetchGa4Dataset, type Ga4SupabaseLike } from "@/lib/ga4/data-access";
 import { buildGa4CroSignals, buildGa4DeviceCroSignals, buildGa4LandingPageCroSignals } from "@/lib/ga4/signals";
+import { buildBlendedDataGapSignals, type ChannelValueAgg } from "@/lib/signals/blended-data-gap";
 import { mergeDetections } from "@/lib/signals/types";
 
 const SECTION = "cross_channel_v1";
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest) {
   const [blendedRes, campaignRes, demoRes, labelRes, settingsRes] = await Promise.all([
     supabase
       .from("blended_account_monthly")
-      .select("month, channel, impressions, clicks, spend, conversions, leads")
+      .select("month, channel, impressions, clicks, spend, conversions, conversion_value, leads")
       .eq("client_id", clientId)
       .gte("month", sinceMonth)
       .lt("month", currentMonthStart),
@@ -136,6 +137,17 @@ export async function POST(request: NextRequest) {
   if (channels.length === 0) {
     return Response.json({ error: "Geen cross-channel maanddata (blended view leeg); minstens een kanaal moet gesynct zijn" }, { status: 404 });
   }
+
+  // Data-volledigheid per kanaal: conversies/spend/waarde over het venster, voor de conversie-
+  // waarde-gap-detector (blended ROAS onberekenbaar zonder waarde).
+  const valueByChannel = new Map<string, ChannelValueAgg>();
+  for (const r of blendedRes.data ?? []) {
+    const ch = String(r.channel);
+    const a = valueByChannel.get(ch) ?? { channel: ch, conversions: 0, conversionValue: 0, spend: 0 };
+    a.conversions += n(r.conversions); a.conversionValue += n(r.conversion_value); a.spend += n(r.spend);
+    valueByChannel.set(ch, a);
+  }
+  const dataGap = buildBlendedDataGapSignals([...valueByChannel.values()]);
 
   // Brand-reeks: Google-campagnes met brand/merk in de naam, klikken per maand gesommeerd.
   const brandByMonth = new Map<string, number>();
@@ -264,8 +276,8 @@ export async function POST(request: NextRequest) {
   // Funnel over de kanalen heen: blended totaal-funnel, fase-achterblijver en divergentie.
   const funnel = buildCrossChannelFunnelSignals(channels);
   const merged = {
-    triggered: [...detected.triggered, ...funnel.triggered, ...kpiRelations.triggered, ...audienceStories, ...ga4Cro.triggered],
-    checked: [...detected.checked, ...funnel.checked, ...kpiRelations.checked, "cross_audience_samenhang", ...ga4Cro.checked],
+    triggered: [...detected.triggered, ...funnel.triggered, ...kpiRelations.triggered, ...audienceStories, ...ga4Cro.triggered, ...dataGap.triggered],
+    checked: [...detected.checked, ...funnel.checked, ...kpiRelations.checked, "cross_audience_samenhang", ...ga4Cro.checked, ...dataGap.checked],
   };
   const { section, triggeredCount, checkedIds } = renderSignalSection(merged, "Cross-channel");
 
@@ -278,6 +290,7 @@ export async function POST(request: NextRequest) {
     { key: "kpi", title: "KPI-verhoudingen (blended)", description: "CPA-decompositie, verzadiging en bereik-verdunning over de kanaalmix.", det: kpiRelations },
     { key: "audience", title: "Doelgroep-samenhang", description: "Converterende LinkedIn-segmenten vs het gedeclareerde doelprofiel.", det: { triggered: audienceStories, checked: ["cross_audience_samenhang"] } },
     { key: "ga4_cro", title: "GA4 CRO (website)", description: "Kanaal-, device- en landingpage-conversiekloof op de site.", det: ga4Cro },
+    { key: "data_gap", title: "Data-volledigheid", description: "Kanalen die wel converteren maar geen conversiewaarde meten — blended ROAS onberekenbaar.", det: dataGap },
   ];
   const groups: CrossGroup[] = groupDefs.map((g) => {
     const r = renderSignalSection(g.det, g.title);
